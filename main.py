@@ -1,21 +1,34 @@
-from delta import get_changed_files, get_diff_for_file
-from scanners.example_scanner import scan_diff
+from scanners.semgrep_scanner import scan_with_semgrep
+from scanners.utils import group_findings_by_file
 from strategies.triage import TriageStrategy
 from strategies.patch import PatchStrategy
+import argparse
+import subprocess
 
 def main():
+    parser = argparse.ArgumentParser(description="Diff-based code scanner")
+    parser.add_argument("--repo", default=None, help="Path to git repo")
+    parser.add_argument("--base-ref", default="origin/main")
+    parser.add_argument("--semgrep-config", default="p/ci")
+    args = parser.parse_args()
+
     triage = TriageStrategy()
     patcher = PatchStrategy()
 
-    for file in get_changed_files():
-        diff = get_diff_for_file(file)
-        findings = scan_diff(diff)
+    findings = scan_with_semgrep(
+        repo_path=args.repo,
+        base_ref=args.base_ref,
+        config=args.semgrep_config,
+    )
 
-        for finding in findings:
+    findings_by_file = group_findings_by_file(findings)
+
+    for file, file_findings in findings_by_file.items():
+        for finding in file_findings:
             context = {
                 "file": file,
-                "diff": diff,
                 "finding": finding,
+                "diff": None,
             }
 
             triage_result = triage.run(context)
