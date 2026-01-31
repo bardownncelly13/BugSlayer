@@ -3,7 +3,7 @@ from typing import List, Dict, Optional
 import subprocess
 import json
 
-def scan_with_semgrep(repo_path: Optional[str] = None, base_ref: str = "origin/main", config: str = "p/ci") -> List[Dict]:
+def scan_with_semgrep(repo_path: Optional[str] = None, base_ref: str = "origin/main", config: str = r".\rules\owasp_minimal.yml") -> List[Dict]:
     cmd = ["semgrep", "ci", "--config", config, "--json"]
 
     env = os.environ.copy()

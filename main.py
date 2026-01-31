@@ -3,15 +3,13 @@ from scanners.utils import group_findings_by_file
 from strategies.triage import TriageStrategy
 from strategies.patch import PatchStrategy
 import argparse
-import subprocess
+import os
+import json
 
-def main():
-    parser = argparse.ArgumentParser(description="Diff-based code scanner")
-    parser.add_argument("--repo", default=None, help="Path to git repo")
-    parser.add_argument("--base-ref", default="origin/main")
-    parser.add_argument("--semgrep-config", default="p/ci")
-    args = parser.parse_args()
+# Default Semgrep config path
+DEFAULT_SEMGREP_CONFIG = os.path.join("rules", "owasp_minimal.yml")
 
+def main(repo_path: str = ".", semgrep_config: str = DEFAULT_SEMGREP_CONFIG, base_ref: str = "origin/main"):
     triage = TriageStrategy()
     patcher = PatchStrategy()
 
@@ -20,6 +18,9 @@ def main():
         base_ref=args.base_ref,
         config=args.semgrep_config,
     )
+
+    # Use this line to output found issues nicely
+    # print(json.dumps(findings, indent=2))
 
     findings_by_file = group_findings_by_file(findings)
 
@@ -44,4 +45,10 @@ def main():
                 print("======================")
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--repo", default=".", help="Path to repo")
+    parser.add_argument("--base-ref", default="origin/main", help="Git base ref")
+    parser.add_argument("--semgrep-config", default=DEFAULT_SEMGREP_CONFIG, help="Path to Semgrep config YAML")
+    args = parser.parse_args()
+
+    main(repo_path=args.repo, semgrep_config=args.semgrep_config, base_ref=args.base_ref)
