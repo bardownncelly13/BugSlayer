@@ -1,0 +1,30 @@
+rules:
+  - id: python-eval-user-input
+    message: "Use of eval() is dangerous and can lead to code execution."
+    severity: ERROR
+    languages: [python]
+    pattern: eval(...)
+
+  - id: python-exec-use
+    message: "Use of exec() can lead to arbitrary code execution."
+    severity: ERROR
+    languages: [python]
+    pattern: exec(...)
+
+  - id: python-shell-true
+    message: "subprocess with shell=True can lead to command injection."
+    severity: WARNING
+    languages: [python]
+    pattern: subprocess.Popen(..., shell=True, ...)
+
+  - id: python-pickle-loads
+    message: "pickle.loads() on untrusted data can lead to code execution."
+    severity: ERROR
+    languages: [python]
+    pattern: pickle.loads(...)
+
+  - id: python-hardcoded-password
+    message: "Hardcoded password detected."
+    severity: WARNING
+    languages: [python]
+    pattern-regex: "(password|passwd|pwd)\\s*=\\s*['\"][^'\"]+['\"]"
