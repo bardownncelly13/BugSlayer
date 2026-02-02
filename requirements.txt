@@ -1,3 +1,4 @@
 azure-ai-projects
 azure-identity
 openai
+semgrep
