@@ -2,6 +2,7 @@ from scanners.semgrep_scanner import scan_with_semgrep
 from scanners.utils import group_findings_by_file
 from strategies.triage import TriageStrategy
 from strategies.patch import PatchStrategy
+import delta
 import argparse
 import os
 import json
@@ -25,12 +26,24 @@ def main(repo_path: str = ".", semgrep_config: str = DEFAULT_SEMGREP_CONFIG, bas
     findings_by_file = group_findings_by_file(findings)
 
     for file, file_findings in findings_by_file.items():
+        file_diff = delta.get_diff_for_file(file, base_ref=args.base_ref)
+
         for finding in file_findings:
+            line = finding.get("start", {}).get("line")
+            diff_snippet = (
+                delta.extract_relevant_diff(file_diff, line)
+                if file_diff and line
+                else None
+            )
+
             context = {
                 "file": file,
                 "finding": finding,
-                "diff": None,
+                "diff": diff_snippet,
             }
+
+            # More debug
+            # print(context)
 
             triage_result = triage.run(context)
             if not triage_result or not triage_result.is_real_issue:
