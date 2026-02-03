@@ -16,11 +16,17 @@ class PatchStrategy(Strategy):
         Given this diff and issue:
         {context['diff']}
 
-        Propose a minimal fix.
+        .
         Output a unified diff only.
         """
+        vulrability = "find it yourself " #submit real vulnerability 
+        sys = f"""you are a code vulnrability fixer and need to submit new code for the lines of codes submitted. We have determined\n 
+        that the vulnerability is {context} return a json output and nothings else with minimal changes to the code. Make sure function names \n
+        are the same and the code would work in the full codebase if overrides whats currently there
+        
+        """
 
-        raw = self.llm.run(prompt)
+        raw = self.llm.run(sys, prompt)
         return PatchResult(
             diff=raw,
             risk="low",

@@ -21,7 +21,12 @@ class TriageStrategy(Strategy):
         - confidence (0-1)
         - reasoning (string)
         """
+        sys = """You are a triage assistant.\n"
+                        "Given the user input, respond ONLY with JSON of the form:\n"
+                        '{ "is_real_issue": boolean, "confidence": number, "reasoning": string }'
+                    
+        Handle string or list of parts"""
 
-        raw = self.llm.run(prompt)
+        raw = self.llm.run(sys,prompt)
         # model_validate is currently not doing anything
         return TriageResult.model_validate(json.loads(raw))

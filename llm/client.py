@@ -26,78 +26,39 @@ class LLMClient:
             api_version=self.azure_api_version
         )
 
-    def run(self, prompt: str) -> str:
+    def run(self,system: str, prompt: str) -> str:
         """
         Return JSON with keys: is_real_issue, confidence, reasoning
         """
         if self._azure_client is not None:
-            return self._mock_response(prompt)
+            return self._mock_response(system, prompt)
 
         if self.primary:
-            return self._legacy_mock_response(prompt)
+            return self._legacy_mock_response(system, prompt)
         if self.fallback:
-            return self._legacy_mock_response(prompt)
+            return self._legacy_mock_response(system, prompt)
 
         raise RuntimeError("No LLM API keys configured")
 
-    def _mock_response(self, prompt: str) -> str:
+    def _mock_response(self, system: str, prompt: str) -> str:
         """
-        Azure-backed implementation that still returns the old JSON shape.
+        Azure-backed implementation that returns raw model output.
         """
         response = self._azure_openai_client.chat.completions.create(
             model=self.azure_model,
             messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a triage assistant.\n"
-                        "Given the user input, respond ONLY with JSON of the form:\n"
-                        '{ "is_real_issue": boolean, "confidence": number, "reasoning": string }'
-                    ),
-                },
+                {"role": "system", "content": system},
                 {"role": "user", "content": prompt},
             ],
         )
 
         content = response.choices[0].message.content
 
-        # Handle string or list of parts
+        # Handle Azure returning list-style content
         if isinstance(content, list):
-            content_str = "".join(
+            return "".join(
                 part.get("text", "") if isinstance(part, dict) else str(part)
                 for part in content
             )
-        else:
-            content_str = str(content)
 
-        # Try to parse JSON from the model
-        try:
-            parsed = json.loads(content_str)
-            result = {
-                "is_real_issue": bool(parsed.get("is_real_issue", True)),
-                "confidence": float(parsed.get("confidence", 0.85)),
-                "reasoning": str(
-                    parsed.get("reasoning", "Model response parsed successfully.")
-                ),
-            }
-        except Exception:
-            # Fallback to deterministic structure if the model didn't return JSON
-            result = {
-                "is_real_issue": True,
-                "confidence": 0.85,
-                "reasoning": "Pattern matches known unsafe usage.",
-            }
-
-        return json.dumps(result)
-
-    def _legacy_mock_response(self, prompt: str) -> str:
-        """
-        Old behavior for non-Azure paths, kept for compatibility.
-        """
-        return json.dumps(
-            {
-                "is_real_issue": True,
-                "confidence": 0.85,
-                "reasoning": "Pattern matches known unsafe usage.",
-            }
-        )
+        return str(content)
