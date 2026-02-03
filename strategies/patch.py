@@ -12,18 +12,38 @@ class PatchStrategy(Strategy):
         if context["triage"].confidence < 0.8:
             return None  # CRS-style early exit
 
+        finding = context["finding"]
         prompt = f"""
-        Given this diff and issue:
-        {context['diff']}
+        The following code change introduced a security vulnerability.
 
-        .
+        Vulnerability:
+        - Rule ID: {finding["check_id"]}
+        - Description: {finding["extra"]["message"]}
+        - Severity: {finding["extra"]["severity"]}
+
+        Code diff:
+        {context["diff"]}
+
+        Fix the vulnerability by modifying the diff above.
         Output a unified diff only.
+
         """
-        vulrability = "find it yourself " #submit real vulnerability 
-        sys = f"""you are a code vulnrability fixer and need to submit new code for the lines of codes submitted. We have determined\n 
-        that the vulnerability is {context} return a json output and nothings else with minimal changes to the code. Make sure function names \n
-        are the same and the code would work in the full codebase if overrides whats currently there
-        
+        vulrability = "???" #submit real vulnerability 
+        # Make more ideal prompts
+        sys = f"""You are an automated security patch generator.
+
+        Rules you MUST follow:
+        - Output a valid unified diff and nothing else.
+        - Modify only the lines shown in the provided diff.
+        - Make the smallest possible change to remove the vulnerability.
+        - Do NOT rename functions, variables, or files.
+        - Do NOT reformat code or change unrelated logic.
+        - Do NOT add new dependencies or imports unless required to fix the vulnerability.
+        - The resulting code must run correctly when applied to the full codebase.
+
+        If the vulnerability cannot be fixed safely under these rules,
+        output an empty diff.
+
         """
 
         raw = self.llm.run(sys, prompt)
