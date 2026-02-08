@@ -1,7 +1,7 @@
 import json
 from llm.client import LLMClient
 from models import PatchResult
-from strategies.base import Strategy
+from strategies.base import Strategy, PatchResult
 
 class PatchStrategy(Strategy):
     def __init__(self):
@@ -56,6 +56,6 @@ Relevant diff context (may be partial):
             file=file,
             old=data["old"],
             new=data["new"],
-            risk="low",
-            requires_human=True,
+            risk=data["risk"],
+            requires_human=(data["risk"] != "low"),
         )
