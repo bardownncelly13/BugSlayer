@@ -44,7 +44,7 @@ def main(repo_path: str = ".", semgrep_config: str = DEFAULT_SEMGREP_CONFIG, bas
             }
 
             # More debug
-            print(context)
+            # print(context)
 
             triage_result = triage.run(context)
             if not triage_result or not triage_result.is_real_issue:
