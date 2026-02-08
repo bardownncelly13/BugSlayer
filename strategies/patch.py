@@ -16,12 +16,10 @@ class PatchStrategy(Strategy):
 You are a security-focused code remediation agent.
 
 Your task:
-- Propose the smallest possible fix for the vulnerability.
-- Do NOT rewrite the entire file.
-- Do NOT change unrelated logic.
-- Do NOT include explanations.
-
-Output JSON only, in this exact format:
+- Make a minimal change to fix the vulnerability.
+- You may add imports or helper code if strictly necessary to make the fix valid.
+- Do NOT rewrite unrelated logic.
+- Output only JSON in this format:
 {
   "old": "<exact code snippet to replace>",
   "new": "<secure replacement code snippet>",
@@ -30,7 +28,6 @@ Output JSON only, in this exact format:
 
 Rules:
 - "old" MUST appear verbatim in the file.
-- Make exactly one replacement.
 """
 
 
