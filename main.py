@@ -16,9 +16,9 @@ def main(repo_path: str = ".", semgrep_config: str = DEFAULT_SEMGREP_CONFIG, bas
 
     findings = scan_with_semgrep(
         repo_path=args.repo,
-        base_ref=args.base_ref,
-        config=args.semgrep_config,
-    )
+        configs=["p/security-audit", "p/owasp-top-ten"],
+    )   
+
 
     # Use this line to output found issues nicely
     # print(json.dumps(findings, indent=2))
