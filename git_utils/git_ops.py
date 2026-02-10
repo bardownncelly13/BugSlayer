@@ -2,6 +2,28 @@ import subprocess
 from typing import List, Optional
 import os
 import re
+from github import Github
+
+def get_repo_from_git(repo_path="."):
+    result = run_git(
+        ["config", "--get", "remote.origin.url"],
+        repo_path,
+        capture_output=True,
+    ).strip()
+
+    if result.startswith("git@"):
+        # git@github.com:owner/repo.git
+        match = re.search(r"git@[^:]+:([^/]+)/(.+?)(\.git)?$", result)
+    else:
+        # https://github.com/owner/repo.git
+        match = re.search(r"https?://[^/]+/([^/]+)/(.+?)(\.git)?$", result)
+
+    if not match:
+        raise ValueError("Unable to parse repository from git remote")
+
+    owner, repo = match.group(1), match.group(2)
+    return owner, repo
+
 
 def run_git(args: List[str], repo_path: str = ".") -> subprocess.CompletedProcess:
     """
@@ -149,3 +171,17 @@ def push_branch(repo_path: str, branch_name: str):
         branch_name: Name of the branch to push.
     """
     run_git(["push", "--set-upstream", "origin", branch_name], repo_path)
+
+def create_pr(repo_path, head, base, title, body):
+    owner, repo_name = get_repo_from_git(repo_path)
+    full_name = f"{owner}/{repo_name}"
+
+    g = Github(os.environ["GITHUB_TOKEN"])
+    repo = g.get_repo(full_name)
+
+    return repo.create_pull(
+        title=title,
+        body=body,
+        head=head,
+        base=base,
+    )

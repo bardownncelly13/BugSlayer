@@ -2,7 +2,7 @@ from scanners.semgrep_scanner import scan_with_semgrep
 from scanners.utils import group_findings_by_file
 from strategies.triage import TriageStrategy
 from strategies.patch import PatchStrategy
-from git_utils.git_ops import run_git, stage_files, commit_changes, apply_patch, create_branch, get_diff_for_file
+from git_utils.git_ops import run_git, stage_files, commit_changes, apply_patch, create_branch, get_diff_for_file, create_pr, push_branch
 from delta import extract_relevant_diff
 import argparse
 import os
@@ -85,6 +85,35 @@ def main(repo_path: str = ".", semgrep_config: str = DEFAULT_SEMGREP_CONFIG, bas
 
             stage_files(repo_path, files_changed)
             commit_changes(repo_path, commit_message, author="LLM Bot <bot@example.com>")
+
+            # Push and Create the PR
+            push_branch(repo_path, branch_name)
+            head = branch_name
+            base = base_ref.replace("origin/", "")
+            title = f"Fix {finding['check_id']} in {file}"
+            body = f"""
+            ### Security Fix (Automated) 
+            
+            **Rule:** `{finding['check_id']}`  
+            **File:** `{file}`  
+            **Severity:** `{finding.get('extra', {}).get('severity', 'unknown')}`  
+            **Risk Assessment:** `{patch.risk}`
+            
+            ---
+            
+            ### Patch Summary
+            This PR applies a minimal, targeted fix to remediate the detected vulnerability.
+            
+            - Exactly one code replacement
+            - No unrelated logic changed
+            - Generated automatically by the remediation agent
+            
+            ---
+            
+            ### ⚠️ Review Notes
+            {"Manual review required." if patch.requires_human else "Low-risk change; manual review optional."}
+"""
+            create_pr(repo_path, head, base, title, body)
 
             # Switch back to the previous branch
             run_git(["checkout", "-"], repo_path)
