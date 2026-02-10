@@ -2,3 +2,4 @@ azure-ai-projects
 azure-identity
 openai
 semgrep
+PyGithub>=2.1
