@@ -1,11 +1,12 @@
 from scanners.semgrep_scanner import semgrep_scan, print_findings
-from scanners.deps_scanner import scan_deps
 from strategies.triage import TriageStrategy
 from strategies.patch import PatchStrategy
 import delta
 import argparse
-import os
-import json
+from strategies.triage import TriageStrategy
+from strategies.patch import PatchStrategy
+from git_utils.git_ops import run_git, stage_files, commit_changes, apply_patch, create_branch, get_diff_for_file, create_pr, push_branch
+from delta import extract_relevant_diff
 
 # Default Semgrep config path
 
@@ -26,7 +27,7 @@ def main(repo_path: str = ".", semgrep_config: str = None, base_ref: str = "orig
         for finding in file_findings:
             line = finding.get("start", {}).get("line")
             diff_snippet = (
-                delta.extract_relevant_diff(file_diff, line)
+                extract_relevant_diff(file_diff, line)
                 if file_diff and line
                 else None
             )
@@ -37,29 +38,80 @@ def main(repo_path: str = ".", semgrep_config: str = None, base_ref: str = "orig
                 "diff": diff_snippet,
             }
 
-            # Triage
-            try:
-                triage_result = triage.run(context)
-            except Exception as e:
-                print(f"Triage failed for {file}:{line}: {e}")
-                continue
+            # More debug
+            # print(context)
 
-            if not triage_result or not getattr(triage_result, "is_real_issue", False):
+            triage_result = triage.run(context)
+            if not triage_result or not triage_result.is_real_issue:
                 continue
 
             context["triage"] = triage_result
-
-            # Patch
-            try:
-                patch = patcher.run(context)
-            except Exception as e:
-                print(f"Patch generation failed for {file}:{line}: {e}")
+            patch = patcher.run(context)
+            
+            # Temporary solution before the fuzzing and improved patching is in place
+            # TODO Update once new structure is done
+            if not patch or not patch.old or not patch.new:
+                print(f"No patch generated for {file}")
                 continue
 
-            if patch:
-                print("=== Proposed Patch ===")
-                print(patch.diff)
-                print("======================")
+            branch_name = f"llm-fix/{finding['check_id']}-{file.replace('/', '-')}"
+            commit_message = f"fix(security): {finding['extra'].get('message', '')}"
+
+            files_changed = [file]
+
+            print("=== Dry Run ===")
+            print("Branch:", branch_name)
+            print("Commit message:", commit_message)
+            print("Files changed:", files_changed)
+            print("Risk level:", patch.risk)
+            print("Old snippet:\n", patch.old)
+            print("New snippet:\n", patch.new)
+            print("================\n")
+
+            # Apply patch locally
+            create_branch(repo_path, branch_name)
+
+            apply_patch(
+                repo_path=repo_path,
+                file_path=file,
+                old=patch.old,
+                new=patch.new,
+            )
+
+            stage_files(repo_path, files_changed)
+            commit_changes(repo_path, commit_message, author="LLM Bot <bot@example.com>")
+
+            # Push and Create the PR
+            push_branch(repo_path, branch_name)
+            head = branch_name
+            base = base_ref.replace("origin/", "")
+            title = f"Fix {finding['check_id']} in {file}"
+            body = f"""
+            ### Security Fix (Automated) 
+            
+            **Rule:** `{finding['check_id']}`  
+            **File:** `{file}`  
+            **Severity:** `{finding.get('extra', {}).get('severity', 'unknown')}`  
+            **Risk Assessment:** `{patch.risk}`
+            
+            ---
+            
+            ### Patch Summary
+            This PR applies a minimal, targeted fix to remediate the detected vulnerability.
+            
+            - Exactly one code replacement
+            - No unrelated logic changed
+            - Generated automatically by the remediation agent
+            
+            ---
+            
+            ### Review Notes
+            {"Manual review required." if patch.requires_human else "Low-risk change; manual review optional."}
+"""
+            create_pr(repo_path, head, base, title, body)
+
+            # Switch back to the previous branch
+            run_git(["checkout", "-"], repo_path)
 
 
 if __name__ == "__main__":
@@ -81,3 +133,4 @@ if __name__ == "__main__":
         else:
             for d in deps:
                 print(f"  - {d.get('tool')} {d.get('package')} severity={d.get('severity')} path={d.get('path')}")
+
