@@ -8,7 +8,6 @@ class PatchStrategy(Strategy):
         self.llm = LLMClient()
 
     def run(self, context):
-        print(f"LLM was fed {context}")
         file = context["file"]
         finding = context["finding"]
         diff = context.get("diff", "")

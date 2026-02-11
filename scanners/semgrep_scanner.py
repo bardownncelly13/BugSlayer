@@ -3,7 +3,7 @@ import subprocess
 from typing import List, Dict, Optional
 import tempfile
 import os
-import delta
+from git_utils.git_ops import git_cmd
 from scanners.utils import group_findings_by_file
 
 def scan_with_semgrep(
@@ -191,10 +191,10 @@ def semgrep_scan(
     # Determine changed files via git: prefer files changed between base_ref..head_ref
     try:
         if base_ref and head_ref:
-            proc = delta.git_cmd(["diff", "--name-only", f"{base_ref}..{head_ref}"], repo_path)
+            proc = git_cmd(["diff", "--name-only", f"{base_ref}..{head_ref}"], repo_path)
             changed_files = [f for f in proc.stdout.splitlines() if f.strip()]
         else:
-            proc = delta.git_cmd(["show", "--name-only", "--pretty=", head_ref or "HEAD"], repo_path)
+            proc = git_cmd(["show", "--name-only", "--pretty=", head_ref or "HEAD"], repo_path)
             changed_files = [f for f in proc.stdout.splitlines() if f.strip()]
     except Exception:
         changed_files = []

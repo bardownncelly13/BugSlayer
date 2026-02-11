@@ -7,9 +7,8 @@ from github import Github
 def get_repo_from_git(repo_path="."):
     result = run_git(
         ["config", "--get", "remote.origin.url"],
-        repo_path,
-        capture_output=True,
-    ).strip()
+        repo_path
+    ).stdout.strip()
 
     if result.startswith("git@"):
         # git@github.com:owner/repo.git
@@ -178,6 +177,11 @@ def create_pr(repo_path, head, base, title, body):
 
     g = Github(os.environ["GITHUB_TOKEN"])
     repo = g.get_repo(full_name)
+
+    # for b in repo.get_branches():
+    #     print(b.name)
+    
+    # print(f"Current base is {base}")
 
     return repo.create_pull(
         title=title,
