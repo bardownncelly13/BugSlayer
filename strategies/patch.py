@@ -8,6 +8,7 @@ class PatchStrategy(Strategy):
         self.llm = LLMClient()
 
     def run(self, context):
+        print(f"LLM was fed {context}")
         file = context["file"]
         finding = context["finding"]
         diff = context.get("diff", "")
@@ -19,6 +20,7 @@ Your task:
 - Make a minimal change to fix the vulnerability.
 - You may add imports or helper code if strictly necessary to make the fix valid.
 - Do NOT rewrite unrelated logic.
+- The line in "old" MUST appear verbatim in the file.
 - Output only JSON in this format:
 {
   "old": "<exact code snippet to replace>",
