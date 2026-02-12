@@ -4,7 +4,8 @@ import pickle
 password = "supersecret123"
 
 data = input()
-eval(data)
+# eval(data)  # Removed for security reasons
+
 
 subprocess.Popen("ls -la", shell=True)
 
