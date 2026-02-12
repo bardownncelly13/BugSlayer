@@ -276,7 +276,7 @@ def create_patch_pr(repo_path, finding, file, patch, base_ref):
         ### Review Notes
         {"Manual review required." if patch.requires_human else "Low-risk change; manual review optional."}
     """
-        print(f"BASE (This should be a branch name): {base}")
+        # print(f"BASE (This should be a branch name): {base}")
         create_pr(repo_path, head, base, title, body)
     except Exception as e:
         print(f"create_patch_pr failed with error {e}")

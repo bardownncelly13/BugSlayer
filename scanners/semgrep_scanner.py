@@ -1,8 +1,10 @@
 import json
 import subprocess
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 import tempfile
 import os
+import re
+from collections import defaultdict
 from git_utils.git_ops import git_cmd
 from scanners.utils import group_findings_by_file
 
@@ -185,6 +187,82 @@ def _has_diff(base_ref: str, head_ref: str, repo_path: str = ".") -> bool:
         return False
 
 
+def _parse_changed_line_ranges(diff_text: str) -> Dict[str, List[Tuple[int, int]]]:
+    """
+    Parse unified diff text and return added/modified line ranges per file.
+
+    Returns:
+        { "path/to/file.py": [(start_line, end_line), ...], ... }
+    """
+    ranges: Dict[str, List[Tuple[int, int]]] = defaultdict(list)
+    current_file: Optional[str] = None
+
+    for line in diff_text.splitlines():
+        if line.startswith("diff --git "):
+            current_file = None
+            continue
+
+        if line.startswith("+++ "):
+            path = line[4:].strip()
+            if path == "/dev/null":
+                current_file = None
+                continue
+            if path.startswith("b/"):
+                path = path[2:]
+            current_file = path
+            continue
+
+        if line.startswith("@@") and current_file:
+            # Example: @@ -12,0 +13,5 @@
+            m = re.search(r"\+(\d+)(?:,(\d+))?", line)
+            if not m:
+                continue
+            start = int(m.group(1))
+            length = int(m.group(2) or "1")
+            if length <= 0:
+                continue
+            ranges[current_file].append((start, start + length - 1))
+
+    return ranges
+
+
+def _get_changed_line_ranges(
+    base_ref: str,
+    head_ref: str,
+    repo_path: str = ".",
+) -> Dict[str, List[Tuple[int, int]]]:
+    proc = git_cmd(["diff", "-U0", f"{base_ref}..{head_ref}"], repo_path)
+    return _parse_changed_line_ranges(proc.stdout or "")
+
+
+def _filter_findings_to_changed_lines(
+    findings: List[Dict],
+    changed_ranges: Dict[str, List[Tuple[int, int]]],
+) -> List[Dict]:
+    if not findings or not changed_ranges:
+        return []
+
+    def _line_in_ranges(line: int, ranges: List[Tuple[int, int]]) -> bool:
+        for start, end in ranges:
+            if start <= line <= end:
+                return True
+        return False
+
+    filtered: List[Dict] = []
+    for f in findings:
+        path = f.get("path")
+        line = f.get("start", {}).get("line")
+        if not path or not line:
+            continue
+        ranges = changed_ranges.get(path)
+        if not ranges:
+            continue
+        if _line_in_ranges(line, ranges):
+            filtered.append(f)
+
+    return filtered
+
+
 def semgrep_scan(
     repo_path: Optional[str] = ".",
     semgrep_config: str = None,
@@ -211,9 +289,16 @@ def semgrep_scan(
     flat_results: List[Dict] = []
 
     if base_ref and head_ref and _has_diff(base_ref, head_ref, repo_path or "."):
-        print(f"[DEBUG] Diff detected; running diff-based semgrep with baseline {base_ref}")
-        extra_args = ["--baseline-commit", base_ref]
-        flat_results = scan_with_semgrep(repo_path=repo_path, configs=configs, extra_args=extra_args)
+        print(f"[DEBUG] Diff detected; scanning changed files between {base_ref}..{head_ref}")
+        changed_ranges = _get_changed_line_ranges(base_ref, head_ref, repo_path or ".")
+        changed_files = list(changed_ranges.keys())
+
+        if not changed_files:
+            print("[DEBUG] No changed files resolved from diff; running full repo semgrep")
+            flat_results = scan_with_semgrep(repo_path=repo_path, configs=configs)
+        else:
+            flat_results = scan_paths(changed_files, repo_root=repo_path or ".", configs=configs)
+            flat_results = _filter_findings_to_changed_lines(flat_results, changed_ranges)
     else:
         print(f"[DEBUG] No diff or diff unavailable; running full repo semgrep")
         flat_results = scan_with_semgrep(repo_path=repo_path, configs=configs)
@@ -235,4 +320,3 @@ def main(repo_path: Optional[str] = ".", semgrep_config: str = "", base_ref: str
         configs = ["p/security-audit", "p/owasp-top-ten"]
 
     return scan_with_semgrep(repo_path=repo_path, configs=configs)
-
