@@ -121,11 +121,7 @@ def print_findings(findings: List[Dict]) -> None:
                     print("    snippet:")
                     for ln in (snippet.splitlines() if isinstance(snippet, str) else [snippet]):
                         print(f"      {ln}")
-import subprocess
-from typing import List, Dict, Optional
-import os
-from git_utils.git_ops import git_cmd
-from scanners.utils import group_findings_by_file
+
 
 
 def scan_with_semgrep(
