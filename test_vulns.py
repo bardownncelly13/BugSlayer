@@ -4,7 +4,7 @@ import pickle
 password = "supersecret123"
 
 data = input()
-eval(data)
+print("Warning: eval() is dangerous and has been removed.")
 
 subprocess.Popen("ls -la", shell=True)
 
