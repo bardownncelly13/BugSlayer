@@ -6,44 +6,6 @@ import os
 from git_utils.git_ops import git_cmd
 from scanners.utils import group_findings_by_file
 
-def scan_with_semgrep(
-    repo_path: Optional[str] = ".",
-    configs: Optional[List[str]] = None,
-) -> List[Dict]:
-    if not configs:
-        configs = ["p/security-audit"]
-
-    # If a specific path was provided but it doesn't exist, skip scanning.
-    if repo_path and repo_path != "." and not os.path.exists(repo_path):
-        return []
-
-    cmd = ["semgrep", "scan", "--quiet", "--json"]
-    for c in configs:
-        cmd += ["--config", c]
-    cmd.append(repo_path or ".")
-
-    p = subprocess.run(cmd, capture_output=True, text=True)
-
-    # 0=no findings, 1=findings, 2+ error (bad args/config/etc.)
-    if p.returncode not in (0, 1):
-        raise RuntimeError(
-            "Semgrep failed.\n"
-            f"Command: {' '.join(cmd)}\n"
-            f"Return code: {p.returncode}\n"
-            f"stderr:\n{p.stderr}\n"
-            f"stdout:\n{p.stdout}\n"
-        )
-
-    if not p.stdout.strip():
-        return []
-
-    data = json.loads(p.stdout)
-    # If semgrep had config errors, they show up here:
-    if data.get("errors"):
-        # Treat as failure (optional). If you prefer, return results anyway.
-        raise RuntimeError("Semgrep reported errors in JSON output:\n" + json.dumps(data["errors"], indent=2))
-
-    return data.get("results", [])
 
 def scan_code_string(
     code: str,
@@ -157,6 +119,111 @@ def print_findings(findings: List[Dict]) -> None:
                     print("    snippet:")
                     for ln in (snippet.splitlines() if isinstance(snippet, str) else [snippet]):
                         print(f"      {ln}")
+import subprocess
+from typing import List, Dict, Optional
+import os
+from git_utils.git_ops import git_cmd
+from scanners.utils import group_findings_by_file
+
+
+def scan_with_semgrep(
+    repo_path: Optional[str] = ".",
+    configs: Optional[List[str]] = None,
+    extra_args: Optional[List[str]] = None,
+) -> List[Dict]:
+    if not configs:
+        configs = ["p/security-audit"]
+
+    # If a specific path was provided but it doesn't exist, skip scanning.
+    if repo_path and repo_path != "." and not os.path.exists(repo_path):
+        return []
+
+    cmd = ["semgrep", "scan", "--quiet", "--json"]
+    for c in configs:
+        cmd += ["--config", c]
+
+    if extra_args:
+        cmd += extra_args
+
+    cmd.append(repo_path or ".")
+
+    p = subprocess.run(cmd, capture_output=True, text=True)
+
+    # 0=no findings, 1=findings, 2+ error (bad args/config/etc.)
+    if p.returncode not in (0, 1):
+        raise RuntimeError(
+            "Semgrep failed.\n"
+            f"Command: {' '.join(cmd)}\n"
+            f"Return code: {p.returncode}\n"
+            f"stderr:\n{p.stderr}\n"
+            f"stdout:\n{p.stdout}\n"
+        )
+
+    if not p.stdout.strip():
+        return []
+
+    data = json.loads(p.stdout)
+    if data.get("errors"):
+        raise RuntimeError(
+            "Semgrep reported errors in JSON output:\n"
+            + json.dumps(data["errors"], indent=2)
+        )
+
+    return data.get("results", [])
+
+
+def _has_diff(base_ref: str, head_ref: str, repo_path: str = ".") -> bool:
+    print(f"[DEBUG] _has_diff base_ref={base_ref!r}, head_ref={head_ref!r}, repo_path={repo_path!r}")
+    try:
+        proc = git_cmd(["diff", "--name-only", f"{base_ref}..{head_ref}"], repo_path)
+        print(f"[DEBUG] git diff output:\n{proc.stdout}")
+        changed_files = [f for f in proc.stdout.splitlines() if f.strip()]
+        print(f"[DEBUG] changed_files={changed_files}")
+        return len(changed_files) > 0
+    except Exception as e:
+        print(f"[DEBUG] git diff failed: {e}")
+        return False
+
+
+def semgrep_scan(
+    repo_path: Optional[str] = ".",
+    semgrep_config: str = None,
+    base_ref: str = "origin/main",
+    head_ref: str = "HEAD",
+) -> Dict[str, List[Dict]]:
+    """
+    High-level helper:
+
+    - If there is a git diff between base_ref and head_ref, run Semgrep with
+      its diff support (baseline-ref) so it only reports findings in changed code.
+    - If there is no diff, run a full repository scan.
+    - If a scan produces no findings, print "No findings" and return {}.
+    """
+    print(f"[DEBUG] semgrep_scan called with repo_path={repo_path!r}, base_ref={base_ref!r}, head_ref={head_ref!r}")
+    # Resolve semgrep configs
+    if semgrep_config and "," in semgrep_config:
+        configs = [x.strip() for x in semgrep_config.split(",") if x.strip()]
+    elif semgrep_config:
+        configs = [semgrep_config]
+    else:
+        configs = ["p/security-audit", "p/owasp-top-ten"]
+
+    flat_results: List[Dict] = []
+
+    if base_ref and head_ref and _has_diff(base_ref, head_ref, repo_path or "."):
+        print(f"[DEBUG] Diff detected; running diff-based semgrep with baseline {base_ref}")
+        extra_args = ["--baseline-commit", base_ref]
+        flat_results = scan_with_semgrep(repo_path=repo_path, configs=configs, extra_args=extra_args)
+    else:
+        print(f"[DEBUG] No diff or diff unavailable; running full repo semgrep")
+        flat_results = scan_with_semgrep(repo_path=repo_path, configs=configs)
+
+    if not flat_results:
+        print("No findings")
+        return {}
+
+    grouped = group_findings_by_file(flat_results)
+    return grouped
 
 def main(repo_path: Optional[str] = ".", semgrep_config: str = "", base_ref: str = "origin/main"):
     # compatibility wrapper; base_ref unused for `scan`
@@ -169,49 +236,3 @@ def main(repo_path: Optional[str] = ".", semgrep_config: str = "", base_ref: str
 
     return scan_with_semgrep(repo_path=repo_path, configs=configs)
 
-
-def semgrep_scan(
-    repo_path: Optional[str] = ".",
-    semgrep_config: str = None,
-    base_ref: str = "origin/main",
-    head_ref: str = "HEAD",
-) -> Dict[str, List[Dict]]:
-    """High-level helper: resolve configs, get changed files between `base_ref` and `head_ref`, and scan only those files.
-
-    Returns a dict mapping file path -> list of semgrep finding dicts (grouped by file).
-    """
-    # Resolve semgrep configs
-    if semgrep_config and "," in semgrep_config:
-        configs = [x.strip() for x in semgrep_config.split(",") if x.strip()]
-    elif semgrep_config:
-        configs = [semgrep_config]
-    else:
-        configs = ["p/security-audit", "p/owasp-top-ten"]
-
-    # Determine changed files via git: prefer files changed between base_ref..head_ref
-    try:
-        if base_ref and head_ref:
-            proc = git_cmd(["diff", "--name-only", f"{base_ref}..{head_ref}"], repo_path)
-            changed_files = [f for f in proc.stdout.splitlines() if f.strip()]
-        else:
-            proc = git_cmd(["show", "--name-only", "--pretty=", head_ref or "HEAD"], repo_path)
-            changed_files = [f for f in proc.stdout.splitlines() if f.strip()]
-    except Exception:
-        changed_files = []
-
-    flat: List[Dict] = []
-    if changed_files:
-        # Debug: show which files will be scanned
-        print(f"Scanning files from commit range {base_ref}..{head_ref}: {changed_files}")
-        flat = scan_paths(changed_files, repo_root=repo_path, configs=configs)
-        # If none of the changed files exist (e.g., only deletions), fall back to full repo
-        if not flat:
-            print("No findings from changed files; falling back to full repo scan")
-            flat = scan_with_semgrep(repo_path=repo_path, configs=configs)
-    else:
-        print(f"No changed files between {base_ref} and {head_ref}; scanning full repository")
-        flat = scan_with_semgrep(repo_path=repo_path, configs=configs)
-
-    # Group findings by file for easier parsing by callers
-    grouped = group_findings_by_file(flat)
-    return grouped
