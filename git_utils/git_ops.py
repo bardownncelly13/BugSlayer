@@ -189,3 +189,98 @@ def create_pr(repo_path, head, base, title, body):
         head=head,
         base=base,
     )
+
+def _generate_unique_branch_name(repo_path, base_name):
+    """
+    Ensure branch name is unique both locally and remotely.
+    Appends -1, -2, etc. if needed.
+    """
+    # Get local branches
+    local = run_git(["branch", "--list"], repo_path).stdout.splitlines()
+    local_branches = {b.strip().lstrip("* ").strip() for b in local}
+
+    # Get remote branches
+    remote = run_git(["branch", "-r"], repo_path).stdout.splitlines()
+    remote_branches = {b.strip().split("/", 1)[-1] for b in remote}
+
+    existing = local_branches.union(remote_branches)
+
+    if base_name not in existing:
+        return base_name
+
+    counter = 1
+    while True:
+        candidate = f"{base_name}-{counter}"
+        if candidate not in existing:
+            return candidate
+        counter += 1
+
+
+def create_patch_pr(repo_path, finding, file, patch, base_ref):
+    original_branch = run_git(["rev-parse", "--abbrev-ref", "HEAD"], repo_path).stdout.strip()
+    try:
+        base_branch_name = f"llm-fix/{finding['check_id']}-{file.replace('/', '-')}"
+        branch_name = _generate_unique_branch_name(repo_path, base_branch_name)
+        commit_message = f"fix(security): {finding['extra'].get('message', '')}"
+
+        files_changed = [file]
+
+        # print("=== Dry Run ===")
+        # print("Branch:", branch_name)
+        # print("Commit message:", commit_message)
+        # print("Files changed:", files_changed)
+        # print("Risk level:", patch.risk)
+        # print("Old snippet:\n", patch.old)
+        # print("New snippet:\n", patch.new)
+        # print("================\n")
+
+        # Apply patch locally
+        create_branch(repo_path, branch_name)
+
+        apply_patch(
+            repo_path=repo_path,
+            file_path=file,
+            old=patch.old,
+            new=patch.new,
+        )
+
+        stage_files(repo_path, files_changed)
+        commit_changes(repo_path, commit_message, author="LLM Bot <bot@example.com>")
+
+        # Push
+        push_branch(repo_path, branch_name)
+
+        # Create PR
+        head = branch_name
+        base = base_ref.replace("origin/", "")
+        title = f"Fix {finding['check_id']} in {file}"
+        body = f"""
+        ### Security Fix (Automated) 
+        
+        **Rule:** `{finding['check_id']}`  
+        **File:** `{file}`  
+        **Severity:** `{finding.get('extra', {}).get('severity', 'unknown')}`  
+        **Risk Assessment:** `{patch.risk}`
+        
+        ---
+        
+        ### Patch Summary
+        This PR applies a minimal, targeted fix to remediate the detected vulnerability.
+        
+        - Exactly one code replacement
+        - No unrelated logic changed
+        - Generated automatically by the remediation agent
+        
+        ---
+        
+        ### Review Notes
+        {"Manual review required." if patch.requires_human else "Low-risk change; manual review optional."}
+    """
+        print(f"BASE (This should be a branch name): {base}")
+        create_pr(repo_path, head, base, title, body)
+    except Exception as e:
+        print(f"create_patch_pr failed with error {e}")
+    finally:
+        run_git(["checkout", original_branch], repo_path)
+
+    return branch_name
