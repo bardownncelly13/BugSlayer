@@ -49,26 +49,40 @@ def scan_paths(
 ) -> List[Dict]:
     """Scan a list of file paths (relative to repo_root or absolute).
 
-    Skips paths that do not exist and continues on per-file errors.
+    Runs a single semgrep process with all valid paths (faster than per-file).
+    Skips paths that do not exist and falls back to per-file scanning on error.
     Returns a flat list of semgrep result dicts.
     """
     if not configs:
         configs = ["p/security-audit"]
 
-    results: List[Dict] = []
+    valid_rel_paths: List[str] = []
     for p in paths:
         full = p if os.path.isabs(p) else os.path.join(repo_root, p)
         if not os.path.exists(full):
             continue
-        try:
-            file_results = scan_with_semgrep(repo_path=full, configs=configs)
-        except Exception:
-            # skip files that cause semgrep/config errors
-            continue
-        if file_results:
-            results.extend(file_results)
+        # keep paths relative to the repo root so semgrep output paths match git diff keys
+        rel = os.path.relpath(full, repo_root) if repo_root and os.path.isdir(repo_root) else full
+        valid_rel_paths.append(rel)
 
-    return results
+    if not valid_rel_paths:
+        return []
+
+    # Try a single batched semgrep invocation first (uses semgrep's internal multiprocessing).
+    try:
+        return scan_with_semgrep(repo_path=repo_root, configs=configs, paths=valid_rel_paths)
+    except Exception:
+        # If batching fails, fall back to the previous per-file behavior.
+        results: List[Dict] = []
+        for rel in valid_rel_paths:
+            try:
+                file_results = scan_with_semgrep(repo_path=os.path.join(repo_root, rel), configs=configs)
+            except Exception:
+                # skip files that cause semgrep/config errors
+                continue
+            if file_results:
+                results.extend(file_results)
+        return results
 
 
 def print_findings(findings: List[Dict]) -> None:
@@ -128,12 +142,20 @@ def scan_with_semgrep(
     repo_path: Optional[str] = ".",
     configs: Optional[List[str]] = None,
     extra_args: Optional[List[str]] = None,
+    paths: Optional[List[str]] = None,
 ) -> List[Dict]:
+    """Run `semgrep scan`.
+
+    - If `paths` is provided, pass them as file arguments in a single semgrep invocation.
+      If `repo_path` is a directory, run semgrep with `cwd=repo_path` so output paths
+      remain relative to the repository root (keeps compatibility with git diff keys).
+    - If `paths` is None, behavior is unchanged (scan `repo_path` or `.`).
+    """
     if not configs:
         configs = ["p/security-audit"]
 
-    # If a specific path was provided but it doesn't exist, skip scanning.
-    if repo_path and repo_path != "." and not os.path.exists(repo_path):
+    # If no batched paths were provided, validate the single repo_path target.
+    if not paths and repo_path and repo_path != "." and not os.path.exists(repo_path):
         return []
 
     cmd = ["semgrep", "scan", "--quiet", "--json"]
@@ -143,9 +165,17 @@ def scan_with_semgrep(
     if extra_args:
         cmd += extra_args
 
-    cmd.append(repo_path or ".")
+    run_cwd = None
+    if paths:
+        # When scanning explicit paths, prefer running in the repo root so semgrep
+        # produces relative paths that match git diff output.
+        if repo_path and os.path.isdir(repo_path):
+            run_cwd = repo_path
+        cmd += paths
+    else:
+        cmd.append(repo_path or ".")
 
-    p = subprocess.run(cmd, capture_output=True, text=True)
+    p = subprocess.run(cmd, capture_output=True, text=True, cwd=run_cwd)
 
     # 0=no findings, 1=findings, 2+ error (bad args/config/etc.)
     if p.returncode not in (0, 1):
