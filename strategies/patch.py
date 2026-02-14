@@ -22,12 +22,14 @@ Your task:
 - You may add imports or helper code if strictly necessary to make the fix valid.
 - Do NOT rewrite unrelated logic.
 - The line in "old" MUST appear verbatim in the file.
+- Do NOT simply comment out the old code; your fix must preserve program logic.
+- Only remove or replace code in a way that keeps the function/file operational.
 - Output only JSON in this format:
-{
+{{
   "old": "<exact code snippet to replace>",
   "new": "<secure replacement code snippet>",
   "risk": "low | medium | high"
-}
+}}
 
 Rules:
 - "old" MUST appear verbatim in the file.

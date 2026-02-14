@@ -13,6 +13,22 @@ def count_non_comment_lines(text: str) -> int:
             count += 1
     return count
 
+def is_patch_comment_out(old: str, new: str) -> bool:
+    """
+    Returns True if the new patch is just commenting out the old line.
+    """
+    old_line = old.strip()
+    new_line = new.strip()
+
+    # exact comment
+    if new_line == f"# {old_line}":
+        return True
+
+    # slightly modified comment (e.g., LLM added extra text)
+    if old_line in new_line.replace("#", "") and "#" in new_line:
+        return True
+
+    return False
 
 def destructive_change_detected(original: str, patched: str) -> bool:
     original_loc = count_non_comment_lines(original)
@@ -83,6 +99,21 @@ def attempt_patch_loop(
 
         patch = patcher.run(context)
 
+        # Reject patches that just comment out the old line
+        old_line = patch.old.strip()
+        new_lines = patch.new.splitlines()
+
+        commented_out = any(
+            old_line in line and line.strip().startswith("#") 
+            for line in new_lines
+        )
+
+        if commented_out:
+            reason = f"Attempt rejected: patch just comments out old line.\nold={patch.old}\nnew={patch.new}"
+            print(reason)
+            failure_reasons.append(reason)
+            continue
+
         # Apply patch in temp repo
         try:
             apply_patch(temp_repo_path, original_file_path, patch.old, patch.new)
@@ -93,7 +124,7 @@ def attempt_patch_loop(
             continue
 
         # Validate patch (syntax, tests, etc.)
-        if not validate_patch(temp_repo_path, patched_file_path):
+        if not validate_patch(temp_repo_path, original_file_path, patched_file_path):
             reason = f"Attempt {attempt} failed validation."
             print(reason)
             failure_reasons.append(f"Attempt {attempt}: old={patch.old} new={patch.new} failed validation")
