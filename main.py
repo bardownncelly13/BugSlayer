@@ -2,14 +2,15 @@ from scanners.semgrep_scanner import semgrep_scan, print_findings
 from strategies.triage import TriageStrategy
 from strategies.patch import PatchStrategy
 from dotenv import load_dotenv
-import argparse
 from strategies.triage import TriageStrategy
 from strategies.patch import PatchStrategy
-from git_utils.git_ops import create_patch_pr, get_diff_for_file
+from git_utils.git_ops import create_patch_pr, get_diff_for_file, create_temp_repo
 from delta import extract_relevant_diff
+from patch_validation import validate_patch, attempt_patch_loop
+from pathlib import Path
 import os
-# Default Semgrep config path
-
+import argparse
+import shutil
 
 def main(repo_path: str = ".", semgrep_config: str = None, base_ref: str = "origin/main", head_ref: str = "HEAD"):
     triage = TriageStrategy()
@@ -55,15 +56,37 @@ def main(repo_path: str = ".", semgrep_config: str = None, base_ref: str = "orig
                 continue
 
             context["triage"] = triage_result
-            patch = patcher.run(context)
-            
-            # Temporary solution before the fuzzing and improved patching is in place
-            # TODO Update once new structure is done
-            if not patch or not patch.old or not patch.new:
-                print(f"No patch generated for {file}")
+            # We can replace this as needed, first solution I thought of was to make it configurable
+            MAX_PATCH_ATTEMPTS = int(os.environ.get("MAX_PATCH_ATTEMPTS", 5))
+
+            # Create sandbox clone
+            temp_repo_path = create_temp_repo(repo_path)
+
+            # Attempt patch loop
+            valid_patch = attempt_patch_loop(
+                context=context,
+                triage_result=triage_result,
+                patcher=patcher,
+                temp_repo_path=temp_repo_path,
+                original_file_path=file,
+                patched_file_path=file,
+                max_attempts=MAX_PATCH_ATTEMPTS,
+            )
+
+            if not valid_patch:
+                print(f"No valid patch generated for {file}")
+                shutil.rmtree(temp_repo_path)
                 continue
 
-            create_patch_pr(repo_path=repo_path, finding=finding, file=file, patch=patch, base_ref=base_ref)
+            create_patch_pr(
+                repo_path=repo_path,
+                finding=finding,
+                file=file,
+                patch=valid_patch,
+                base_ref=base_ref,
+            )
+
+            shutil.rmtree(temp_repo_path)
 
 
 if __name__ == "__main__":

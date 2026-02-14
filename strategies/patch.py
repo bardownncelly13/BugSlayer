@@ -11,8 +11,10 @@ class PatchStrategy(Strategy):
         file = context["file"]
         finding = context["finding"]
         diff = context.get("diff", "")
+        previous_failures = context.get("previous_failures", [])
+        failure_msg = "\n".join(previous_failures)
 
-        sys = """
+        sys = f"""
 You are a security-focused code remediation agent.
 
 Your task:
@@ -29,6 +31,9 @@ Your task:
 
 Rules:
 - "old" MUST appear verbatim in the file.
+
+Previous failed attempts (do NOT repeat these changes):
+{failure_msg}
 """
 
 

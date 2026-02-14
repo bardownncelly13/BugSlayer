@@ -2,6 +2,7 @@ import subprocess
 from typing import List, Optional
 import os
 import re
+import tempfile
 from github import Github
 
 def get_repo_from_git(repo_path="."):
@@ -190,6 +191,7 @@ def create_pr(repo_path, head, base, title, body):
         base=base,
     )
 
+
 def _generate_unique_branch_name(repo_path, base_name):
     """
     Ensure branch name is unique both locally and remotely.
@@ -284,3 +286,20 @@ def create_patch_pr(repo_path, finding, file, patch, base_ref):
         run_git(["checkout", original_branch], repo_path)
 
     return branch_name
+
+
+def reset_temp_repo(repo_path):
+    run_git(["reset", "--hard"], repo_path)
+    run_git(["clean", "-fd"], repo_path)
+
+
+def create_temp_repo(repo_path: str) -> str:
+    temp_dir = tempfile.mkdtemp(prefix="remediation_")
+
+    subprocess.run(
+        ["git", "clone", repo_path, temp_dir],
+        check=True,
+        capture_output=True,
+    )
+
+    return temp_dir
