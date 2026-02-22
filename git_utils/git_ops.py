@@ -193,19 +193,25 @@ def create_pr(repo_path, head, base, title, body):
 
 
 def _generate_unique_branch_name(repo_path, base_name):
-    """
-    Ensure branch name is unique both locally and remotely.
-    Appends -1, -2, etc. if needed.
-    """
-    # Get local branches
-    local = run_git(["branch", "--list"], repo_path).stdout.splitlines()
-    local_branches = {b.strip().lstrip("* ").strip() for b in local}
+    # Make sure remote branch list is current
+    run_git(["fetch", "--prune"], repo_path)
 
-    # Get remote branches
-    remote = run_git(["branch", "-r"], repo_path).stdout.splitlines()
-    remote_branches = {b.strip().split("/", 1)[-1] for b in remote}
+    # Local branches
+    local = run_git(["branch", "--format=%(refname:short)"], repo_path).stdout.splitlines()
+    local_branches = {b.strip() for b in local}
+
+    # Remote branches (cleaner format)
+    remote = run_git(["branch", "-r", "--format=%(refname:short)"], repo_path).stdout.splitlines()
+
+    # Remove origin/ prefix cleanly
+    remote_branches = {
+        b.replace("origin/", "", 1).strip()
+        for b in remote
+        if "->" not in b  # skip HEAD pointer line
+    }
 
     existing = local_branches.union(remote_branches)
+    # print(f"Existing Branches: {existing}")
 
     if base_name not in existing:
         return base_name

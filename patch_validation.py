@@ -2,6 +2,37 @@ import difflib
 from validators.registry import get_validator
 from validators.base import ValidationError
 from git_utils.git_ops import apply_patch, reset_temp_repo
+from scanners.semgrep_scanner import scan_paths
+import os
+
+def format_findings(findings):
+    formatted = []
+
+    for f in findings:
+        check_id = f.get("check_id")
+        message = f.get("extra", {}).get("message", "")
+        line = f.get("start", {}).get("line", "?")
+        snippet = f.get("extra", {}).get("lines", "").strip()
+
+        formatted.append(
+            f"""Rule: {check_id}
+            Line: {line}
+            Message: {message}
+            Code:
+            {snippet}
+            """
+        )
+
+    return "\n---\n".join(formatted)
+
+def fingerprint(findings):
+    return {
+        (
+            f.get("check_id"),
+            f.get("start", {}).get("line")
+        )
+        for f in findings
+    }
 
 def count_non_comment_lines(text: str) -> int:
     lines = text.splitlines()
@@ -84,7 +115,7 @@ def validate_patch(repo_path: str, original_file: str, patched_file: str) -> boo
 
 def attempt_patch_loop(
     context,
-    triage_result,
+    all_findings,
     patcher,
     temp_repo_path,
     original_file_path,
@@ -128,6 +159,60 @@ def attempt_patch_loop(
             reason = f"Attempt {attempt} failed validation."
             print(reason)
             failure_reasons.append(f"Attempt {attempt}: old={patch.old} new={patch.new} failed validation")
+
+            reset_temp_repo(temp_repo_path)
+            continue
+
+        # Re-scan patched file
+        # print(f"New Patch: {patch.new}")
+        # print("Scanning repo root:", temp_repo_path)
+        # print("Scanning file path:", original_file_path)
+        # print("Absolute file being scanned:", os.path.join(temp_repo_path, original_file_path))
+
+        baseline_findings = all_findings.get(original_file_path, [])
+        baseline_fp = fingerprint(baseline_findings)
+
+        new_findings = scan_paths(
+            paths=[original_file_path],
+            repo_root=temp_repo_path,
+            configs=["p/security-audit", "p/owasp-top-ten"]
+        )
+
+        new_fp = fingerprint(new_findings)
+
+        # Check if original finding still present
+        original_rule = context['finding'].get("check_id")
+
+        still_present = any(
+            f.get("check_id") == original_rule
+            for f in new_findings
+        )
+
+        # print(f"Bug is still present? {still_present}")
+
+        if still_present:
+            reason = f"Attempt {attempt}: original vulnerability still present after patch."
+            failure_reasons.append(reason)
+            reset_temp_repo(temp_repo_path)
+            continue
+
+        # Should only have vulnerabilities that did not exist pre-patch
+        introduced = new_fp - baseline_fp
+
+        # Check if new vulnerabilities introduced
+        if introduced:
+            detailed = format_findings(new_findings)
+
+            reason = f"""
+            Attempt {attempt} rejected.
+            The patch introduced new vulnerabilities:
+
+            {detailed}
+
+            You must fix the original issue WITHOUT introducing these patterns.
+            """
+            # print(reason)
+            failure_reasons.append(reason)
 
             reset_temp_repo(temp_repo_path)
             continue

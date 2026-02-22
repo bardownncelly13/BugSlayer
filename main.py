@@ -65,7 +65,7 @@ def main(repo_path: str = ".", semgrep_config: str = None, base_ref: str = "orig
             # Attempt patch loop
             valid_patch = attempt_patch_loop(
                 context=context,
-                triage_result=triage_result,
+                all_findings=findings,
                 patcher=patcher,
                 temp_repo_path=temp_repo_path,
                 original_file_path=file,
