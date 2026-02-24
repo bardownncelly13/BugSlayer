@@ -34,6 +34,8 @@ def main(repo_path: str = ".", semgrep_config: str = None, base_ref: str = "orig
         except Exception:
             # If flashscan or its optional deps are unavailable, continue silently
             print("Gemini scanner not available (missing dependency or import error)")
+    else:
+        print("no geminai api key")
 
     # For each finding, run triage and (if real) propose a patch
     for file, file_findings in findings.items():
