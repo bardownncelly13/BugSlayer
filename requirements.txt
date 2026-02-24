@@ -3,3 +3,4 @@ azure-identity
 openai
 semgrep
 PyGithub>=2.1
+google-genai
