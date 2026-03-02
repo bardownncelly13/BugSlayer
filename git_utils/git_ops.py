@@ -7,6 +7,7 @@ import requests
 from github import Github
 
 
+
 def run_git(args: List[str], repo_path: str = ".") -> subprocess.CompletedProcess:
     """
     Run a git command in a given repository path using subprocess.
@@ -135,6 +136,36 @@ def get_repo_info(repo_path: str = ".") -> Dict[str, str]:
         "repo": repo,
     }
 
+def configure_azure_git_auth(repo_path: str = "."):
+    """
+    For non-interactive environments (CI/Docker), configure 'origin' to embed
+    the Azure DevOps PAT in the remote URL so `git push` works without prompts.
+
+    Uses:
+        AZURE_DEVOPS_TOKEN  - required
+        AZURE_DEVOPS_USER   - optional, defaults to 'azdo'
+    """
+    info = get_repo_info(repo_path)
+    if info["provider"] != "azure":
+        # No-op for GitHub or other providers
+        return
+
+    token = os.environ.get("AZURE_DEVOPS_TOKEN")
+    if not token:
+        raise RuntimeError("AZURE_DEVOPS_TOKEN environment variable is required for Azure DevOps")
+
+    user = os.environ.get("AZURE_DEVOPS_USER", "azdo")
+
+    host = info["host"]
+    org = info["org"]
+    project = info["project"]
+    repo_name = info["repo"]
+
+    # Remote format: https://user:token@dev.azure.com/org/project/_git/repo
+    authed_url = f"https://{user}:{token}@{host}/{org}/{project}/_git/{repo_name}"
+
+    # Update origin to use the authenticated URL
+    run_git(["remote", "set-url", "origin", authed_url], repo_path)
 
 def get_repo_from_git(repo_path: str = "."):
     """
@@ -228,7 +259,7 @@ def create_pr(repo_path, head, base, title, body):
     """
     info = get_repo_info(repo_path)
 
-    # GitHub path (unchanged behavior)
+    # GitHub path 
     if info["provider"] == "github":
         g = Github(os.environ["GITHUB_TOKEN"])
         full_name = f"{info['owner']}/{info['repo']}"
@@ -247,7 +278,7 @@ def create_pr(repo_path, head, base, title, body):
         if not token:
             raise RuntimeError("AZURE_DEVOPS_TOKEN environment variable is not set")
 
-        host = info["host"]        # e.g. dev.azure.com
+        host = info["host"]        
         org = info["org"]
         project = info["project"]
         repo_name = info["repo"]
@@ -324,6 +355,8 @@ def create_patch_pr(repo_path, finding, file, patch, base_ref):
         stage_files(repo_path, files_changed)
         commit_changes(repo_path, commit_message, author="LLM Bot <bot@example.com>")
 
+        #CONFOG AZURE so it doesnt ask for PAT again
+        configure_azure_git_auth(repo_path)
         # Push
         push_branch(repo_path, branch_name)
 
