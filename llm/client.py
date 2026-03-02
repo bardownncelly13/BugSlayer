@@ -9,34 +9,56 @@ from azure.identity import DefaultAzureCredential
 
 class LLMClient:
     def __init__(self):
-        self.primary = os.getenv("ANTHROPIC_API_KEY")
-        self.fallback = os.getenv("OPENAI_API_KEY")
+        self.endpoint = os.getenv("JP_ENDPOINT")
+        self.api_key = os.getenv("JP_API_KEY")
+        self.provider = os.getenv("JP_PROVIDER")
+        self.model = os.getenv("JP_MODEL")
 
-        self.azure_project_endpoint = (
-            "https://ryancoffman-5902-resource.services.ai.azure.com/api/projects/ryancoffman-5902"
-        )
-        self.azure_api_version = "2024-10-21"
-        self.azure_model = "gpt-4.1"
+        if not self.endpoint:
+            raise ValueError("JP_ENDPOINT environment variable is not set")
 
-        self._azure_client: Optional[AIProjectClient] = AIProjectClient(
-            endpoint=self.azure_project_endpoint,
-            credential=DefaultAzureCredential(),
-        )
-        self._azure_openai_client = self._azure_client.get_openai_client(
-            api_version=self.azure_api_version
-        )
+        if not self.api_key:
+            raise ValueError("JP_API_KEY environment variable is not set")
+        
+        if not self.provider:
+            raise ValueError("JP_PROVIDER environment variable is not set")
+        
+        if not self.model:
+            raise ValueError("JP_MODEL environment variable is not set")
+
+
+        if self.provider == "azure":
+            from openai import AzureOpenAI
+            self.client = AzureOpenAI(
+                api_key= self.api_key,
+                azure_endpoint= self.endpoint,
+                api_version="2024-10-21",
+            )
+
+        elif self.provider == "openai":
+            from openai import OpenAI
+            self.client = OpenAI(api_key= self.api_key)
+
+        elif self.provider == "groq":
+            from openai import OpenAI
+            self.client = OpenAI(api_key= self.api_key, base_url= self.endpoint)
+
+        elif self.provider == "anthropic":
+            from anthropic import Anthropic
+            self.client = Anthropic(api_key= self.api_key)
 
     def run(self,system: str, prompt: str) -> str:
         """
         Return JSON with keys: is_real_issue, confidence, reasoning
         """
-        if self._azure_client is not None:
+        if self.client is not None:
             return self._mock_response(system, prompt)
 
-        if self.primary:
-            return self._legacy_mock_response(system, prompt)
-        if self.fallback:
-            return self._legacy_mock_response(system, prompt)
+        #why do we have this? - ask 
+        # if self.primary: 
+        #     return self._legacy_mock_response(system, prompt)
+        # if self.fallback:
+        #     return self._legacy_mock_response(system, prompt)
 
         raise RuntimeError("No LLM API keys configured")
 
@@ -44,8 +66,8 @@ class LLMClient:
         """
         Azure-backed implementation that returns raw model output.
         """
-        response = self._azure_openai_client.chat.completions.create(
-            model=self.azure_model,
+        response = self.client.chat.completions.create(
+            model=self.model,
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": prompt},
