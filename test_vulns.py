@@ -8,4 +8,5 @@ eval(data)
 
 subprocess.Popen("ls -la", shell=True)
 
-pickle.loads(data)
+import json
+json.loads(data)
