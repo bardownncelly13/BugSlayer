@@ -20,23 +20,23 @@ def main(repo_path: str = ".", semgrep_config: str = None, base_ref: str = "orig
 
     # If a Gemini API key is configured, run a complementary LLM-based scan
     # over the same repository (changed files when base_ref provided).
-    if os.getenv("GEMINI_API_KEY"):
-        try:
-            from scanners.flashscan import gemini_scan, print_gemini_findings, gemini_findings_to_json
+    # if os.getenv("GEMINI_API_KEY"):
+    #     try:
+    #         from scanners.flashscan import gemini_scan, print_gemini_findings, gemini_findings_to_json
 
-            try:
-                gemini_findings = gemini_scan(repo_path=repo_path, base_ref=base_ref, head_ref=head_ref)
-                print_gemini_findings(gemini_findings)
-                if gemini_findings:
-                    print("\n=== Gemini Results (JSON) ===\n")
-                    print(gemini_findings_to_json(gemini_findings))
-            except Exception as e:
-                print(f"Gemini scan failed: {e}")
-        except Exception:
-            # If flashscan or its optional deps are unavailable, continue silently
-            print("Gemini scanner not available (missing dependency or import error)")
-    else:
-        print("no geminai api key")
+    #         try:
+    #             gemini_findings = gemini_scan(repo_path=repo_path, base_ref=base_ref, head_ref=head_ref)
+    #             print_gemini_findings(gemini_findings)
+    #             if gemini_findings:
+    #                 print("\n=== Gemini Results (JSON) ===\n")
+    #                 print(gemini_findings_to_json(gemini_findings))
+    #         except Exception as e:
+    #             print(f"Gemini scan failed: {e}")
+    #     except Exception:
+    #         # If flashscan or its optional deps are unavailable, continue silently
+    #         print("Gemini scanner not available (missing dependency or import error)")
+    # else:
+    #     print("no geminai api key")
 
     # For each finding, run triage and (if real) propose a patch
     for file, file_findings in findings.items():

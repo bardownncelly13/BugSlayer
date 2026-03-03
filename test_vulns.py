@@ -1,11 +1,18 @@
+import os
 import subprocess
-import pickle
 
-password = "supersecret123"
 
-data = input()
-eval(data)
+def bad_subprocess():
+    user_input = input("Enter cmd: ")
+    subprocess.run(user_input, shell=True)  
 
-subprocess.Popen("ls -la", shell=True)
 
-pickle.loads(data)
+def bad_eval():
+    code = input("Enter Python: ")
+    eval(code)  
+
+
+if __name__ == "__main__":
+    bad_subprocess()
+
+    bad_eval()

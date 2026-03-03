@@ -151,6 +151,7 @@ def attempt_patch_loop(
         except ValueError as e:
             reason = f"Attempt {attempt} failed: {str(e)}"
             print(reason)
+            print(patch.old)
             failure_reasons.append(reason)
             continue
 

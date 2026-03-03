@@ -125,6 +125,8 @@ def apply_patch(repo_path, file_path, old, new):
     with open(path, "r", encoding="utf-8") as f:
         content = f.read()
 
+    print(content)
+    
     if old not in content:
         raise ValueError(
             f"Patch anchor not found in {file_path}"
@@ -256,40 +258,40 @@ def create_patch_pr(repo_path, finding, file, patch, base_ref):
         commit_changes(repo_path, commit_message, author="LLM Bot <bot@example.com>")
 
         # Push
-        push_branch(repo_path, branch_name)
+    #     push_branch(repo_path, branch_name)
 
-        # Create PR
-        head = branch_name
-        base = base_ref.replace("origin/", "")
-        title = f"Fix {finding['check_id']} in {file}"
-        body = f"""
-        ### Security Fix (Automated) 
+    #     # Create PR
+    #     head = branch_name
+    #     base = base_ref.replace("origin/", "")
+    #     title = f"Fix {finding['check_id']} in {file}"
+    #     body = f"""
+    #     ### Security Fix (Automated) 
         
-        **Rule:** `{finding['check_id']}`  
-        **File:** `{file}`  
-        **Severity:** `{finding.get('extra', {}).get('severity', 'unknown')}`  
-        **Risk Assessment:** `{patch.risk}`
+    #     **Rule:** `{finding['check_id']}`  
+    #     **File:** `{file}`  
+    #     **Severity:** `{finding.get('extra', {}).get('severity', 'unknown')}`  
+    #     **Risk Assessment:** `{patch.risk}`
         
-        ---
+    #     ---
         
-        ### Patch Summary
-        This PR applies a minimal, targeted fix to remediate the detected vulnerability.
+    #     ### Patch Summary
+    #     This PR applies a minimal, targeted fix to remediate the detected vulnerability.
         
-        - Exactly one code replacement
-        - No unrelated logic changed
-        - Generated automatically by the remediation agent
+    #     - Exactly one code replacement
+    #     - No unrelated logic changed
+    #     - Generated automatically by the remediation agent
         
-        ---
+    #     ---
         
-        ### Review Notes
-        {"Manual review required." if patch.requires_human else "Low-risk change; manual review optional."}
-    """
-        # print(f"BASE (This should be a branch name): {base}")
-        create_pr(repo_path, head, base, title, body)
+    #     ### Review Notes
+    #     {"Manual review required." if patch.requires_human else "Low-risk change; manual review optional."}
+    # """
+    #     # print(f"BASE (This should be a branch name): {base}")
+    #     create_pr(repo_path, head, base, title, body)
     except Exception as e:
         print(f"create_patch_pr failed with error {e}")
-    finally:
-        run_git(["checkout", original_branch], repo_path)
+    # finally:
+    #     run_git(["checkout", original_branch], repo_path)
 
     return branch_name
 
