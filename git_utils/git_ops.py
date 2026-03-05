@@ -1,40 +1,16 @@
 import subprocess
-from typing import List, Optional
+from typing import List, Optional, Dict
 import os
 import re
 import tempfile
+import requests
 from github import Github
 
-def get_repo_from_git(repo_path="."):
-    result = run_git(
-        ["config", "--get", "remote.origin.url"],
-        repo_path
-    ).stdout.strip()
-
-    if result.startswith("git@"):
-        # git@github.com:owner/repo.git
-        match = re.search(r"git@[^:]+:([^/]+)/(.+?)(\.git)?$", result)
-    else:
-        # https://github.com/owner/repo.git
-        match = re.search(r"https?://[^/]+/([^/]+)/(.+?)(\.git)?$", result)
-
-    if not match:
-        raise ValueError("Unable to parse repository from git remote")
-
-    owner, repo = match.group(1), match.group(2)
-    return owner, repo
 
 
 def run_git(args: List[str], repo_path: str = ".") -> subprocess.CompletedProcess:
     """
     Run a git command in a given repository path using subprocess.
-
-    Args:
-        args: List of git command arguments (e.g., ["status"]).
-        repo_path: Path to the git repository. Defaults to current directory.
-
-    Returns:
-        subprocess.CompletedProcess object containing stdout, stderr, and returncode.
     """
     return subprocess.run(
         ["git"] + args,
@@ -48,13 +24,6 @@ def run_git(args: List[str], repo_path: str = ".") -> subprocess.CompletedProces
 def git_cmd(args: List[str], repo_path: Optional[str] = None) -> subprocess.CompletedProcess:
     """
     Helper function to run a git command, optionally specifying a repo path with -C.
-
-    Args:
-        args: List of git command arguments.
-        repo_path: Optional path to the git repository. If provided, adds -C <repo_path>.
-
-    Returns:
-        subprocess.CompletedProcess object containing stdout, stderr, and returncode.
     """
     cmd = ["git"]
     if repo_path:
@@ -68,15 +37,150 @@ def git_cmd(args: List[str], repo_path: Optional[str] = None) -> subprocess.Comp
     )
 
 
+def get_repo_info(repo_path: str = ".") -> Dict[str, str]:
+    """
+    Inspect remote.origin.url and return a dict describing the repository.
+
+    For GitHub:
+        {
+            "provider": "github",
+            "owner": "...",
+            "repo": "..."
+        }
+
+    For Azure DevOps (dev.azure.com):
+        HTTPS: https://dev.azure.com/<org>/<project>/_git/<repo>
+        SSH:   git@ssh.dev.azure.com:v3/<org>/<project>/<repo>
+
+        {
+            "provider": "azure",
+            "host": "dev.azure.com",
+            "org": "<org>",
+            "project": "<project>",
+            "repo": "<repo>"
+        }
+
+    (Visual Studio format is partially supported but dev.azure.com is the main case.)
+    """
+    remote = run_git(
+        ["config", "--get", "remote.origin.url"],
+        repo_path,
+    ).stdout.strip()
+
+    # Azure DevOps: HTTPS (dev.azure.com)
+    if "dev.azure.com" in remote:
+        # e.g. https://dev.azure.com/org/project/_git/repo
+        #      or https://user@dev.azure.com/org/project/_git/repo
+        m = re.search(
+            r"https://(?:(?P<user>[^@]+)@)?(?P<host>[^/]+)/(?P<org>[^/]+)/(?P<project>[^/]+)/_git/(?P<repo>[^/]+)",
+            remote,
+        )
+        if m:
+            return {
+                "provider": "azure",
+                "host": m.group("host"),
+                "org": m.group("org"),
+                "project": m.group("project"),
+                "repo": m.group("repo"),
+            }
+
+    # Azure DevOps: SSH (ssh.dev.azure.com)
+    if "ssh.dev.azure.com" in remote:
+        # e.g. git@ssh.dev.azure.com:v3/org/project/repo
+        m = re.search(
+            r"git@ssh\.dev\.azure\.com:v3/(?P<org>[^/]+)/(?P<project>[^/]+)/(?P<repo>[^/]+)",
+            remote,
+        )
+        if m:
+            return {
+                "provider": "azure",
+                "host": "dev.azure.com",
+                "org": m.group("org"),
+                "project": m.group("project"),
+                "repo": m.group("repo"),
+            }
+
+    # (Optional) older visualstudio.com style
+    if "visualstudio.com" in remote:
+        # e.g. https://org.visualstudio.com/project/_git/repo
+        m = re.search(
+            r"https://(?P<host>[^/]+)/(?P<project>[^/]+)/_git/(?P<repo>[^/]+)",
+            remote,
+        )
+        if m:
+            host = m.group("host")          # org.visualstudio.com
+            org = host.split(".", 1)[0]     # org
+            return {
+                "provider": "azure",
+                "host": host,
+                "org": org,
+                "project": m.group("project"),
+                "repo": m.group("repo"),
+            }
+
+    # Fallback: assume GitHub
+    # SSH:  git@github.com:owner/repo.git
+    if remote.startswith("git@"):
+        m = re.search(r"git@[^:]+:([^/]+)/(.+?)(\.git)?$", remote)
+    else:
+        # HTTPS: https://github.com/owner/repo.git
+        m = re.search(r"https?://[^/]+/([^/]+)/(.+?)(\.git)?$", remote)
+
+    if not m:
+        raise ValueError(f"Unable to parse repository from git remote: {remote}")
+
+    owner, repo = m.group(1), m.group(2)
+    return {
+        "provider": "github",
+        "owner": owner,
+        "repo": repo,
+    }
+
+def configure_azure_git_auth(repo_path: str = "."):
+    """
+    For non-interactive environments (CI/Docker), configure 'origin' to embed
+    the Azure DevOps PAT in the remote URL so `git push` works without prompts.
+
+    Uses:
+        AZURE_DEVOPS_TOKEN  - required
+        AZURE_DEVOPS_USER   - optional, defaults to 'azdo'
+    """
+    info = get_repo_info(repo_path)
+    if info["provider"] != "azure":
+        # No-op for GitHub or other providers
+        return
+
+    token = os.environ.get("AZURE_DEVOPS_TOKEN")
+    if not token:
+        raise RuntimeError("AZURE_DEVOPS_TOKEN environment variable is required for Azure DevOps")
+
+    user = os.environ.get("AZURE_DEVOPS_USER", "azdo")
+
+    host = info["host"]
+    org = info["org"]
+    project = info["project"]
+    repo_name = info["repo"]
+
+    # Remote format: https://user:token@dev.azure.com/org/project/_git/repo
+    authed_url = f"https://{user}:{token}@{host}/{org}/{project}/_git/{repo_name}"
+
+    # Update origin to use the authenticated URL
+    run_git(["remote", "set-url", "origin", authed_url], repo_path)
+
+def get_repo_from_git(repo_path: str = "."):
+    """
+    Backwards-compatible wrapper for old callers that expect (owner, repo)
+    for GitHub only.
+    """
+    info = get_repo_info(repo_path)
+    if info["provider"] != "github":
+        raise ValueError("get_repo_from_git is only valid for GitHub remotes.")
+    return info["owner"], info["repo"]
+
+
 def get_changed_files(base_ref: str = "origin/main") -> List[str]:
     """
     Get a list of files that have changed compared to a base git reference.
-
-    Args:
-        base_ref: Git reference to compare against (branch, commit hash, etc.). Default is "origin/main".
-
-    Returns:
-        List of file paths (strings) that are different from the base_ref.
     """
     result = subprocess.run(
         ["git", "diff", "--name-only", base_ref],
@@ -90,13 +194,6 @@ def get_changed_files(base_ref: str = "origin/main") -> List[str]:
 def get_diff_for_file(path: str, base_ref: str = "origin/main") -> str:
     """
     Get the git diff for a single file compared to a base reference.
-
-    Args:
-        path: Path to the file.
-        base_ref: Git reference to compare against. Default is "origin/main".
-
-    Returns:
-        String containing the diff output.
     """
     result = subprocess.run(
         ["git", "diff", base_ref, "--", path],
@@ -110,12 +207,7 @@ def get_diff_for_file(path: str, base_ref: str = "origin/main") -> str:
 def create_branch(repo_path: str, branch_name: str):
     """
     Create a new git branch from the currently checked-out branch (HEAD).
-
-    Args:
-        repo_path: Path to the git repository.
-        branch_name: Name of the new branch to create.
     """
-
     run_git(["checkout", "-b", branch_name], repo_path)
 
 
@@ -141,10 +233,6 @@ def apply_patch(repo_path, file_path, old, new):
 def stage_files(repo_path: str, files: List[str]):
     """
     Stage a list of files for commit.
-
-    Args:
-        repo_path: Path to the git repository.
-        files: List of file paths to stage.
     """
     run_git(["add"] + files, repo_path)
 
@@ -152,11 +240,6 @@ def stage_files(repo_path: str, files: List[str]):
 def commit_changes(repo_path: str, message: str, author: Optional[str] = None):
     """
     Commit staged changes with a commit message and optional author.
-
-    Args:
-        repo_path: Path to the git repository.
-        message: Commit message.
-        author: Optional author string in the form "Name <email>". If None, uses default git committer.
     """
     cmd = ["commit", "-m", message]
     if author:
@@ -167,31 +250,60 @@ def commit_changes(repo_path: str, message: str, author: Optional[str] = None):
 def push_branch(repo_path: str, branch_name: str):
     """
     Push a branch to the remote repository and set upstream tracking.
-
-    Args:
-        repo_path: Path to the git repository.
-        branch_name: Name of the branch to push.
     """
     run_git(["push", "--set-upstream", "origin", branch_name], repo_path)
 
+
 def create_pr(repo_path, head, base, title, body):
-    owner, repo_name = get_repo_from_git(repo_path)
-    full_name = f"{owner}/{repo_name}"
+    """
+    Create a pull request for either GitHub or Azure DevOps,
+    depending on the remote.
+    """
+    info = get_repo_info(repo_path)
 
-    g = Github(os.environ["GITHUB_TOKEN"])
-    repo = g.get_repo(full_name)
+    # GitHub path 
+    if info["provider"] == "github":
+        g = Github(os.environ["GITHUB_TOKEN"])
+        full_name = f"{info['owner']}/{info['repo']}"
+        repo = g.get_repo(full_name)
 
-    # for b in repo.get_branches():
-    #     print(b.name)
-    
-    # print(f"Current base is {base}")
+        return repo.create_pull(
+            title=title,
+            body=body,
+            head=head,
+            base=base,
+        )
 
-    return repo.create_pull(
-        title=title,
-        body=body,
-        head=head,
-        base=base,
-    )
+    # Azure DevOps path
+    if info["provider"] == "azure":
+        token = os.environ.get("AZURE_DEVOPS_TOKEN")
+        if not token:
+            raise RuntimeError("AZURE_DEVOPS_TOKEN environment variable is not set")
+
+        host = info["host"]        
+        org = info["org"]
+        project = info["project"]
+        repo_name = info["repo"]
+
+        # Azure DevOps REST API endpoint for creating a PR by repo name
+        # POST https://dev.azure.com/{org}/{project}/_apis/git/repositories/{repo}/pullrequests?api-version=7.1-preview.1
+        url = f"https://{host}/{org}/{project}/_apis/git/repositories/{repo_name}/pullrequests"
+        params = {"api-version": "7.1-preview.1"}
+
+        payload = {
+            "sourceRefName": f"refs/heads/{head}",
+            "targetRefName": f"refs/heads/{base}",
+            "title": title,
+            "description": body,
+        }
+
+        # PAT via Basic auth: username can be empty, PAT is the password
+        resp = requests.post(url, json=payload, params=params, auth=("", token))
+        resp.raise_for_status()
+        return resp.json()
+
+    raise ValueError(f"Unsupported provider in repo info: {info}")
+
 
 
 def _generate_unique_branch_name(repo_path, base_name):
@@ -227,22 +339,17 @@ def _generate_unique_branch_name(repo_path, base_name):
 
 
 def create_patch_pr(repo_path, finding, file, patch, base_ref):
-    original_branch = run_git(["rev-parse", "--abbrev-ref", "HEAD"], repo_path).stdout.strip()
+    original_branch = run_git(
+        ["rev-parse", "--abbrev-ref", "HEAD"],
+        repo_path
+    ).stdout.strip()
+
     try:
         base_branch_name = f"llm-fix/{finding['check_id']}-{file.replace('/', '-')}"
         branch_name = _generate_unique_branch_name(repo_path, base_branch_name)
         commit_message = f"fix(security): {finding['extra'].get('message', '')}"
 
         files_changed = [file]
-
-        # print("=== Dry Run ===")
-        # print("Branch:", branch_name)
-        # print("Commit message:", commit_message)
-        # print("Files changed:", files_changed)
-        # print("Risk level:", patch.risk)
-        # print("Old snippet:\n", patch.old)
-        # print("New snippet:\n", patch.new)
-        # print("================\n")
 
         # Apply patch locally
         create_branch(repo_path, branch_name)
@@ -257,6 +364,8 @@ def create_patch_pr(repo_path, finding, file, patch, base_ref):
         stage_files(repo_path, files_changed)
         commit_changes(repo_path, commit_message, author="LLM Bot <bot@example.com>")
 
+        #CONFOG AZURE so it doesnt ask for PAT again
+        configure_azure_git_auth(repo_path)
         # Push
     #     push_branch(repo_path, branch_name)
 
