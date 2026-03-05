@@ -217,7 +217,7 @@ def apply_patch(repo_path, file_path, old, new):
     with open(path, "r", encoding="utf-8") as f:
         content = f.read()
 
-    print(content)
+    # print(content)
     
     if old not in content:
         raise ValueError(
@@ -399,8 +399,8 @@ def create_patch_pr(repo_path, finding, file, patch, base_ref):
     #     create_pr(repo_path, head, base, title, body)
     except Exception as e:
         print(f"create_patch_pr failed with error {e}")
-    # finally:
-    #     run_git(["checkout", original_branch], repo_path)
+    finally:
+        run_git(["checkout", original_branch], repo_path)
 
     return branch_name
 
