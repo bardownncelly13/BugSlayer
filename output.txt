@@ -1,0 +1,142 @@
+Starting at Mon Mar  2 20:47:57 2026
+[DEBUG] semgrep_scan called with repo_path='../RepoVulnCity/OWASPJuice-all-many/juice-shop/', base_ref='master', head_ref='HEAD'
+[DEBUG] _has_diff base_ref='master', head_ref='HEAD', repo_path='../RepoVulnCity/OWASPJuice-all-many/juice-shop/'
+[DEBUG] git diff output:
+
+[DEBUG] changed_files=[]
+[DEBUG] No diff or diff unavailable; running full repo semgrep
+[DEBUG] Semgrep reported 39 non-fatal issues.
+../RepoVulnCity/OWASPJuice-all-many/juice-shop/routes/fileServer.ts
+  - javascript.express.security.audit.express-res-sendfile.express-res-sendfile: line=61 severity=WARNING message=The application processes user-input, this is passed to res.sendFile which can allow an attacker to arbitrarily read files on the system through path traversal. It is recommended to perform input validation in addition to canonicalizing the path. This allows you to validate the path against the intended directory it should be accessing.
+    snippet:
+           59: const resolvedSafePath = path.resolve(safePath);
+           60: if (resolvedSafePath.startsWith(baseDir + path.sep)) {
+      >>   61:   res.sendFile(resolvedSafePath);
+           62: } else {
+           63:   res.status(403).send('Forbidden');
+../RepoVulnCity/OWASPJuice-all-many/juice-shop/routes/keyServer.ts
+  - javascript.express.security.audit.express-res-sendfile.express-res-sendfile: line=52 severity=WARNING message=The application processes user-input, this is passed to res.sendFile which can allow an attacker to arbitrarily read files on the system through path traversal. It is recommended to perform input validation in addition to canonicalizing the path. This allows you to validate the path against the intended directory it should be accessing.
+    snippet:
+           50:   return res.status(403).send('Access denied.');
+           51: }
+      >>   52: res.sendFile(canonicalPath);
+           53: } else {
+           54:   res.status(403).send('Access denied');
+../RepoVulnCity/OWASPJuice-all-many/juice-shop/routes/logfileServer.ts
+  - javascript.express.security.audit.express-res-sendfile.express-res-sendfile: line=52 severity=WARNING message=The application processes user-input, this is passed to res.sendFile which can allow an attacker to arbitrarily read files on the system through path traversal. It is recommended to perform input validation in addition to canonicalizing the path. This allows you to validate the path against the intended directory it should be accessing.
+    snippet:
+           50:   return res.status(403).send('Access denied');
+           51: }
+      >>   52: res.sendFile(resolvedPath);
+           53: } else {
+           54:   res.status(403).send('Forbidden');
+../RepoVulnCity/OWASPJuice-all-many/juice-shop/routes/quarantineServer.ts
+  - javascript.express.security.audit.express-path-join-resolve-traversal.express-path-join-resolve-traversal: line=19 severity=WARNING message=Possible writing outside of the destination, make sure that the target path is nested in the intended destination
+    snippet:
+           17:   const path = require('path');
+           18:   const safeBase = path.resolve(__dirname, '../public/quarantine');
+      >>   19:   const resolvedPath = path.resolve(safeBase, requestedPath);
+           20: if (!resolvedPath.startsWith(path.resolve(safeBase) + path.sep) && resolvedPath !== path.resolve(safeBase)) {
+           21:   return res.status(400).send('Invalid path');
+  - javascript.express.security.audit.express-res-sendfile.express-res-sendfile: line=53 severity=WARNING message=The application processes user-input, this is passed to res.sendFile which can allow an attacker to arbitrarily read files on the system through path traversal. It is recommended to perform input validation in addition to canonicalizing the path. This allows you to validate the path against the intended directory it should be accessing.
+    snippet:
+           51:     return res.status(403).send('Access denied');
+           52:   }
+      >>   53:   res.sendFile(resolvedPath);
+           54: } else {
+           55:   res.status(400).send('Invalid file path');
+../RepoVulnCity/OWASPJuice-all-many/juice-shop/routes/redirect.ts
+  - javascript.express.security.audit.possible-user-input-redirect.unknown-value-in-redirect: line=67 severity=WARNING message=It looks like 'toUrl' is read from user input and it is used to as a redirect. Ensure 'toUrl' is not externally controlled, otherwise this is an open redirect.
+    snippet:
+           65:   res.status(400).send('Invalid redirect URL.');
+           66: } else {
+      >>   67:   if (/^https?:\/\//i.test(toUrl) || toUrl.startsWith('//')) { res.status(400).send('Invalid redirect URL.'); } else { if (toUrl.startsWith('/')) { if (typeof toUrl === 'string' && toUrl.startsWith('/') && !toUrl.startsWith('//')) { if (typeof toUrl === 'string' && toUrl.charAt(0) === '/' && !toUrl.startsWith('//')) { res.redirect(toUrl); } else { res.status(400).send('Invalid redirect URL.'); } } else { res.status(400).send('Invalid redirect URL.'); } } else { res.status(400).send('Invalid redirect URL.'); } }
+           68: }
+           69: } else {
+  - javascript.express.security.audit.express-open-redirect.express-open-redirect: line=67 severity=WARNING message=The application redirects to a URL specified by user-supplied input `query` that is not validated. This could redirect users to malicious locations. Consider using an allow-list approach to validate URLs, or warn users they are being redirected to a third-party website.
+    snippet:
+           65:   res.status(400).send('Invalid redirect URL.');
+           66: } else {
+      >>   67:   if (/^https?:\/\//i.test(toUrl) || toUrl.startsWith('//')) { res.status(400).send('Invalid redirect URL.'); } else { if (toUrl.startsWith('/')) { if (typeof toUrl === 'string' && toUrl.startsWith('/') && !toUrl.startsWith('//')) { if (typeof toUrl === 'string' && toUrl.charAt(0) === '/' && !toUrl.startsWith('//')) { res.redirect(toUrl); } else { res.status(400).send('Invalid redirect URL.'); } } else { res.status(400).send('Invalid redirect URL.'); } } else { res.status(400).send('Invalid redirect URL.'); } }
+           68: }
+           69: } else {
+../RepoVulnCity/OWASPJuice-all-many/juice-shop/routes/videoHandler.ts
+  - javascript.lang.security.audit.unknown-value-with-script-tag.unknown-value-with-script-tag: line=74 severity=WARNING message=Cannot determine what 'subs' is and it is used with a '<script>' tag. This could be susceptible to cross-site scripting (XSS). Ensure 'subs' is not externally controlled, or sanitize this data.
+    snippet:
+           72:       let compiledTemplate = fn()
+           73:       const escapeHTML = (str: string) => str.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
+      >>   74: compiledTemplate = compiledTemplate.replace('<script id="subtitle"></script>', '<script id="subtitle" type="text/vtt" data-label="English" data-lang="en">' + escapeHTML(subs) + '</script>');
+           75:       res.send(compiledTemplate)
+           76:     })
+Inside loop
+Base ref: master
+get diff for file: ../RepoVulnCity/OWASPJuice-all-many/juice-shop/routes/fileServer.ts failed with exception '/mnt/c/Users/aries/Documents/Capstone/RepoVulnCity/OWASPJuice-all-many/juice-shop/routes/fileServer.ts' is not in the subpath of '/mnt/c/Users/aries/Documents/Capstone/BugSlayer/master'
+Attempt 1 failed: Patch anchor not found in routes/fileServer.ts
+Attempt 2 failed: Patch anchor not found in routes/fileServer.ts
+Attempt 3 failed: Patch anchor not found in routes/fileServer.ts
+Attempt 4 failed: Patch anchor not found in routes/fileServer.ts
+Attempt 5 failed: Patch anchor not found in routes/fileServer.ts
+Patch generation failed after 5 attempts. Failures:
+Attempt 1 failed: Patch anchor not found in routes/fileServer.ts
+Attempt 2 failed: Patch anchor not found in routes/fileServer.ts
+Attempt 3 failed: Patch anchor not found in routes/fileServer.ts
+Attempt 4 failed: Patch anchor not found in routes/fileServer.ts
+Attempt 5 failed: Patch anchor not found in routes/fileServer.ts
+No valid patch generated for routes/fileServer.ts
+Inside loop
+Base ref: master
+get diff for file: ../RepoVulnCity/OWASPJuice-all-many/juice-shop/routes/keyServer.ts failed with exception '/mnt/c/Users/aries/Documents/Capstone/RepoVulnCity/OWASPJuice-all-many/juice-shop/routes/keyServer.ts' is not in the subpath of '/mnt/c/Users/aries/Documents/Capstone/BugSlayer/master'
+Attempt 1 failed: Patch anchor not found in routes/keyServer.ts
+Attempt 2 failed: Patch anchor not found in routes/keyServer.ts
+Attempt 3 failed: Patch anchor not found in routes/keyServer.ts
+Attempt 4 failed: Patch anchor not found in routes/keyServer.ts
+Attempt 5 failed: Patch anchor not found in routes/keyServer.ts
+Patch generation failed after 5 attempts. Failures:
+Attempt 1 failed: Patch anchor not found in routes/keyServer.ts
+Attempt 2 failed: Patch anchor not found in routes/keyServer.ts
+Attempt 3 failed: Patch anchor not found in routes/keyServer.ts
+Attempt 4 failed: Patch anchor not found in routes/keyServer.ts
+Attempt 5 failed: Patch anchor not found in routes/keyServer.ts
+No valid patch generated for routes/keyServer.ts
+Inside loop
+Base ref: master
+get diff for file: ../RepoVulnCity/OWASPJuice-all-many/juice-shop/routes/logfileServer.ts failed with exception '/mnt/c/Users/aries/Documents/Capstone/RepoVulnCity/OWASPJuice-all-many/juice-shop/routes/logfileServer.ts' is not in the subpath of '/mnt/c/Users/aries/Documents/Capstone/BugSlayer/master'
+Attempt 1 failed: Patch anchor not found in routes/logfileServer.ts
+Attempt 2 failed: Patch anchor not found in routes/logfileServer.ts
+Attempt 3 failed: Patch anchor not found in routes/logfileServer.ts
+Attempt 4 failed: Patch anchor not found in routes/logfileServer.ts
+Attempt 5 failed: Patch anchor not found in routes/logfileServer.ts
+Patch generation failed after 5 attempts. Failures:
+Attempt 1 failed: Patch anchor not found in routes/logfileServer.ts
+Attempt 2 failed: Patch anchor not found in routes/logfileServer.ts
+Attempt 3 failed: Patch anchor not found in routes/logfileServer.ts
+Attempt 4 failed: Patch anchor not found in routes/logfileServer.ts
+Attempt 5 failed: Patch anchor not found in routes/logfileServer.ts
+No valid patch generated for routes/logfileServer.ts
+Inside loop
+Base ref: master
+get diff for file: ../RepoVulnCity/OWASPJuice-all-many/juice-shop/routes/quarantineServer.ts failed with exception '/mnt/c/Users/aries/Documents/Capstone/RepoVulnCity/OWASPJuice-all-many/juice-shop/routes/quarantineServer.ts' is not in the subpath of '/mnt/c/Users/aries/Documents/Capstone/BugSlayer/master'
+Attempt 1 failed: Patch anchor not found in routes/quarantineServer.ts
+Attempt 2 failed: Patch anchor not found in routes/quarantineServer.ts
+Attempt 3 failed: Patch anchor not found in routes/quarantineServer.ts
+Attempt 4 failed: Patch anchor not found in routes/quarantineServer.ts
+Attempt 5 failed: Patch anchor not found in routes/quarantineServer.ts
+Patch generation failed after 5 attempts. Failures:
+Attempt 1 failed: Patch anchor not found in routes/quarantineServer.ts
+Attempt 2 failed: Patch anchor not found in routes/quarantineServer.ts
+Attempt 3 failed: Patch anchor not found in routes/quarantineServer.ts
+Attempt 4 failed: Patch anchor not found in routes/quarantineServer.ts
+Attempt 5 failed: Patch anchor not found in routes/quarantineServer.ts
+No valid patch generated for routes/quarantineServer.ts
+Traceback (most recent call last):
+  File "/mnt/c/Users/aries/Documents/Capstone/BugSlayer/main.py", line 151, in <module>
+    main(repo_path=args.repo, semgrep_config=args.semgrep_config, base_ref=args.base_ref, head_ref=args.head_ref)
+  File "/mnt/c/Users/aries/Documents/Capstone/BugSlayer/main.py", line 96, in main
+    file = normalize_repo_relative(file, repo_path)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/c/Users/aries/Documents/Capstone/BugSlayer/delta.py", line 33, in normalize_repo_relative
+    return str(file_path.relative_to(repo_root))
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/pathlib.py", line 682, in relative_to
+    raise ValueError(f"{str(self)!r} is not in the subpath of {str(other)!r}")
+ValueError: '/mnt/c/Users/aries/Documents/Capstone/BugSlayer/routes/quarantineServer.ts' is not in the subpath of '/mnt/c/Users/aries/Documents/Capstone/RepoVulnCity/OWASPJuice-all-many/juice-shop'

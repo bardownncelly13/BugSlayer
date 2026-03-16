@@ -1,6 +1,5 @@
 import json
 from llm.client import LLMClient
-from models import PatchResult
 from strategies.base import Strategy, PatchResult
 
 class PatchStrategy(Strategy):
@@ -18,21 +17,34 @@ class PatchStrategy(Strategy):
 You are a security-focused code remediation agent.
 
 Your task:
-- Make a minimal change to fix the vulnerability.
+- Make minimal changes to fix the vulnerability.
 - You may add imports or helper code if strictly necessary to make the fix valid.
 - Do NOT rewrite unrelated logic.
-- The line in "old" MUST appear verbatim in the file.
+- Each "old" snippet MUST appear verbatim in the file.
 - Do NOT simply comment out the old code; your fix must preserve program logic.
 - Only remove or replace code in a way that keeps the function/file operational.
-- Output only JSON in this format:
+
+Output only JSON in one of these formats:
+
+Single replacement:
 {{
   "old": "<exact code snippet to replace>",
   "new": "<secure replacement code snippet>",
   "risk": "low | medium | high"
 }}
 
+Multiple replacements (use when the fix requires several edits in the same file, e.g. add import + fix call, or fix two occurrences):
+{{
+  "replacements": [
+    {{ "old": "<exact snippet 1>", "new": "<replacement 1>" }},
+    {{ "old": "<exact snippet 2>", "new": "<replacement 2>" }}
+  ],
+  "risk": "low | medium | high"
+}}
+
 Rules:
-- "old" MUST appear verbatim in the file.
+- Each "old" MUST appear verbatim in the file; list them in the order they appear in the file (top to bottom) so they can be applied correctly.
+- Prefer a single replacement when possible; use multiple only when necessary (e.g. adding an import and fixing the vulnerable line).
 
 Previous failed attempts (do NOT repeat these changes):
 {failure_msg}
@@ -57,10 +69,18 @@ Relevant diff context (may be partial):
         except json.JSONDecodeError:
             raise ValueError("PatchStrategy: LLM did not return valid JSON")
 
+        risk = data.get("risk", "medium")
+        if "replacements" in data:
+            replacements = [(r["old"], r["new"]) for r in data["replacements"]]
+        else:
+            replacements = [(data["old"], data["new"])]
+
+        if not replacements:
+            raise ValueError("PatchStrategy: LLM returned no replacements")
+
         return PatchResult(
             file=file,
-            old=data["old"],
-            new=data["new"],
-            risk=data["risk"],
-            requires_human=(data["risk"] != "low"),
+            replacements=replacements,
+            risk=risk,
+            requires_human=(risk != "low"),
         )

@@ -4,6 +4,7 @@ import os
 import re
 import tempfile
 from github import Github
+from delta import normalize_repo_relative
 
 def get_repo_from_git(repo_path="."):
     result = run_git(
@@ -87,22 +88,22 @@ def get_changed_files(base_ref: str = "origin/main") -> List[str]:
     return [f for f in result.stdout.splitlines() if f.strip()]
 
 
-def get_diff_for_file(path: str, base_ref: str = "origin/main") -> str:
+def get_diff_for_file(path: str, base_ref: str = "origin/main", repo_path: str = ".") -> str:
     """
     Get the git diff for a single file compared to a base reference.
 
     Args:
-        path: Path to the file.
+        path: Path to the file (repo-relative or absolute under repo).
         base_ref: Git reference to compare against. Default is "origin/main".
+        repo_path: Path to the git repository. Default is current directory.
 
     Returns:
         String containing the diff output.
     """
-    result = subprocess.run(
-        ["git", "diff", base_ref, "--", path],
-        capture_output=True,
-        text=True,
-        check=True,
+    path_for_git = normalize_repo_relative(path, repo_path)
+    result = run_git(
+        ["diff", base_ref, "--", path_for_git],
+        repo_path,
     )
     return result.stdout
 
@@ -119,21 +120,124 @@ def create_branch(repo_path: str, branch_name: str):
     run_git(["checkout", "-b", branch_name], repo_path)
 
 
-def apply_patch(repo_path, file_path, old, new):
+def _normalize_whitespace_for_anchor(s: str, tab_size: int = 4) -> str:
+    """Expand tabs to spaces so anchor matching is insensitive to tab vs space indentation."""
+    return s.replace("\t", " " * tab_size)
+
+
+def _find_anchor_ignoring_leading_indent(content: str, old: str):
+    """
+    Find `old` in `content` when the file has leading indentation (tabs/spaces)
+    before the snippet that the LLM did not include. Matches at line boundaries:
+    at each line start we skip whitespace, then require the line(s) to match old.
+    Returns (start, end) in content (the code span only; indentation to the left
+    is preserved when we replace with new), or (-1, -1) if not found.
+    """
+    lines_old = old.splitlines()
+    if not lines_old:
+        return -1, -1
+
+    pos = 0
+    while pos < len(content):
+        start_line = pos
+        # Skip leading whitespace on this line (tabs and spaces)
+        while pos < len(content) and content[pos] in " \t":
+            pos += 1
+        match_start = pos
+        # Try to match all lines of old from here
+        ok = True
+        for i, line_old in enumerate(lines_old):
+            if i > 0:
+                if pos >= len(content) or content[pos] != "\n":
+                    ok = False
+                    break
+                pos += 1
+                while pos < len(content) and content[pos] in " \t":
+                    pos += 1
+            if pos + len(line_old) > len(content):
+                ok = False
+                break
+            if content[pos : pos + len(line_old)] != line_old:
+                ok = False
+                break
+            pos += len(line_old)
+        if ok:
+            return match_start, pos
+        # Advance to next line start
+        pos = content.find("\n", start_line)
+        if pos == -1:
+            break
+        pos += 1
+    return -1, -1
+
+
+def _find_anchor_with_whitespace_flex(content: str, old: str, tab_size: int = 4):
+    """
+    Find the first occurrence of `old` in `content`, using exact match first,
+    then tab-normalized match, then match ignoring leading indentation per line
+    (so LLM snippet without tabs/spaces matches file lines that have them).
+    Returns (start, end) in original content, or (-1, -1) if not found.
+    """
+    pos = content.find(old)
+    if pos != -1:
+        return pos, pos + len(old)
+
+    # Try: file has tabs, LLM has spaces (or vice versa) – normalize both
+    content_n = _normalize_whitespace_for_anchor(content, tab_size)
+    old_n = _normalize_whitespace_for_anchor(old, tab_size)
+    pos_n = content_n.find(old_n)
+    if pos_n != -1:
+        n_to_c = []
+        content_pos = 0
+        for c in content:
+            n = tab_size if c == "\t" else 1
+            for _ in range(n):
+                n_to_c.append(content_pos)
+            content_pos += 1
+        n_to_c.append(content_pos)
+        end_n = pos_n + len(old_n)
+        start_content = n_to_c[pos_n]
+        end_content = n_to_c[end_n] if end_n < len(n_to_c) else len(content)
+        return start_content, end_content
+
+    # Try: LLM gave snippet without leading indent; file has indent (tab/space) before it
+    return _find_anchor_ignoring_leading_indent(content, old)
+
+
+def apply_patch(repo_path, file_path, replacements):
+    """
+    Apply one or more (old, new) replacements to a file.
+    replacements: list of (old_str, new_str) tuples. Applied in reverse order
+    by position so that earlier edits do not shift indices for later ones.
+    Anchor matching normalizes tabs to spaces so LLM output (often spaces)
+    matches files that use tabs for indentation.
+    """
     path = os.path.join(repo_path, file_path)
+    pairs = list(replacements)
+    if not pairs:
+        raise ValueError("apply_patch: replacements list is empty")
 
     with open(path, "r", encoding="utf-8") as f:
         content = f.read()
 
-    if old not in content:
-        raise ValueError(
-            f"Patch anchor not found in {file_path}"
-        )
+    # Find start/end in content for each "old" (exact or tab-normalized match)
+    positions = []
+    for i, (old, new) in enumerate(pairs):
+        start, end = _find_anchor_with_whitespace_flex(content, old)
+        if start == -1:
+            raise ValueError(
+                f"Patch anchor not found in {file_path} (replacement {i + 1}/{len(pairs)})"
+            )
+        # Store (start, end, new) so we can replace content[start:end] with new
+        positions.append((start, end, new))
 
-    updated = content.replace(old, new, 1)
+    # Apply in reverse order by position so offsets stay valid
+    positions.sort(key=lambda x: x[0], reverse=True)
+    for start, end, new in positions:
+        content = content[:start] + new + content[end:]
 
     with open(path, "w", encoding="utf-8") as f:
-        f.write(updated)
+        f.write(content)
 
 
 def stage_files(repo_path: str, files: List[str]):
@@ -248,44 +352,43 @@ def create_patch_pr(repo_path, finding, file, patch, base_ref):
         apply_patch(
             repo_path=repo_path,
             file_path=file,
-            old=patch.old,
-            new=patch.new,
+            replacements=patch.replacements,
         )
 
         stage_files(repo_path, files_changed)
         commit_changes(repo_path, commit_message, author="LLM Bot <bot@example.com>")
 
         # Push
-        push_branch(repo_path, branch_name)
+    #     push_branch(repo_path, branch_name)
 
-        # Create PR
-        head = branch_name
-        base = base_ref.replace("origin/", "")
-        title = f"Fix {finding['check_id']} in {file}"
-        body = f"""
-        ### Security Fix (Automated) 
+    #     # Create PR
+    #     head = branch_name
+    #     base = base_ref.replace("origin/", "")
+    #     title = f"Fix {finding['check_id']} in {file}"
+    #     body = f"""
+    #     ### Security Fix (Automated) 
         
-        **Rule:** `{finding['check_id']}`  
-        **File:** `{file}`  
-        **Severity:** `{finding.get('extra', {}).get('severity', 'unknown')}`  
-        **Risk Assessment:** `{patch.risk}`
+    #     **Rule:** `{finding['check_id']}`  
+    #     **File:** `{file}`  
+    #     **Severity:** `{finding.get('extra', {}).get('severity', 'unknown')}`  
+    #     **Risk Assessment:** `{patch.risk}`
         
-        ---
+    #     ---
         
-        ### Patch Summary
-        This PR applies a minimal, targeted fix to remediate the detected vulnerability.
+    #     ### Patch Summary
+    #     This PR applies a minimal, targeted fix to remediate the detected vulnerability.
         
-        - Exactly one code replacement
-        - No unrelated logic changed
-        - Generated automatically by the remediation agent
+    #     - Exactly one code replacement
+    #     - No unrelated logic changed
+    #     - Generated automatically by the remediation agent
         
-        ---
+    #     ---
         
-        ### Review Notes
-        {"Manual review required." if patch.requires_human else "Low-risk change; manual review optional."}
-    """
-        # print(f"BASE (This should be a branch name): {base}")
-        create_pr(repo_path, head, base, title, body)
+    #     ### Review Notes
+    #     {"Manual review required." if patch.requires_human else "Low-risk change; manual review optional."}
+    # """
+    #     # print(f"BASE (This should be a branch name): {base}")
+    #     create_pr(repo_path, head, base, title, body)
     except Exception as e:
         print(f"create_patch_pr failed with error {e}")
     finally:

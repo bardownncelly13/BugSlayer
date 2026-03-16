@@ -130,24 +130,27 @@ def attempt_patch_loop(
 
         patch = patcher.run(context)
 
-        # Reject patches that just comment out the old line
-        old_line = patch.old.strip()
-        new_lines = patch.new.splitlines()
-
-        commented_out = any(
-            old_line in line and line.strip().startswith("#") 
-            for line in new_lines
-        )
-
+        # Reject patches that just comment out the old line (check each replacement)
+        commented_out = False
+        for old_snippet, new_snippet in patch.replacements:
+            old_line = old_snippet.strip()
+            new_lines = new_snippet.splitlines()
+            if any(
+                old_line in line and line.strip().startswith("#")
+                for line in new_lines
+            ):
+                commented_out = True
+                break
         if commented_out:
-            reason = f"Attempt rejected: patch just comments out old line.\nold={patch.old}\nnew={patch.new}"
+            reason = "Attempt rejected: patch just comments out old line."
             print(reason)
             failure_reasons.append(reason)
             continue
 
         # Apply patch in temp repo
         try:
-            apply_patch(temp_repo_path, original_file_path, patch.old, patch.new)
+            print(f"Applying patch: {patch.replacements}")
+            apply_patch(temp_repo_path, original_file_path, patch.replacements)
         except ValueError as e:
             reason = f"Attempt {attempt} failed: {str(e)}"
             print(reason)
@@ -158,7 +161,7 @@ def attempt_patch_loop(
         if not validate_patch(temp_repo_path, original_file_path, patched_file_path):
             reason = f"Attempt {attempt} failed validation."
             print(reason)
-            failure_reasons.append(f"Attempt {attempt}: old={patch.old} new={patch.new} failed validation")
+            failure_reasons.append(f"Attempt {attempt}: patch failed validation")
 
             reset_temp_repo(temp_repo_path)
             continue
