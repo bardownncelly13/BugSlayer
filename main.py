@@ -42,7 +42,7 @@ def main(repo_path: str = ".", semgrep_config: str = None, base_ref: str = "orig
 
     # For each finding, run triage and (if real) propose a patch
     for file, file_findings in findings.items():
-        print("Inside loop")
+        # print("Inside loop")
         try:
             file_diff = get_diff_for_file(file, base_ref=base_ref, repo_path=repo_path)
             # print(f"file diff was extracted as: {file_diff}")
