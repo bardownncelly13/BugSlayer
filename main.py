@@ -45,7 +45,7 @@ def main(repo_path: str = ".", semgrep_config: str = None, base_ref: str = "orig
         print("Inside loop")
         try:
             file_diff = get_diff_for_file(file, base_ref=base_ref, repo_path=repo_path)
-            print(f"file diff was extracted as: {file_diff}")
+            # print(f"file diff was extracted as: {file_diff}")
         except Exception as e:
             print(f"get diff for file: {file} failed with exception {e}")
             file_diff = None
