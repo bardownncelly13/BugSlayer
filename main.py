@@ -25,11 +25,10 @@ def main(repo_path: str = ".", semgrep_config: str = None, base_ref: str = "orig
             from scanners.flashscan import gemini_scan, print_gemini_findings, gemini_findings_to_json
 
             try:
-                gemini_findings = gemini_scan(repo_path=repo_path, base_ref=base_ref, head_ref=head_ref)
-                # print_gemini_findings(gemini_findings)
+                gemini_findings = gemini_findings_to_json(gemini_scan(repo_path=repo_path, base_ref=base_ref, head_ref=head_ref))
                 if gemini_findings:
                     print("\n=== Gemini Results (JSON) ===\n")
-                    print(gemini_findings_to_json(gemini_findings))
+                    print((gemini_findings))
             except Exception as e:
                 print(f"Gemini scan failed: {e}")
         except Exception:
@@ -77,36 +76,36 @@ def main(repo_path: str = ".", semgrep_config: str = None, base_ref: str = "orig
 
             context["triage"] = triage_result
             # We can replace this as needed, first solution I thought of was to make it configurable
-            MAX_PATCH_ATTEMPTS = int(os.environ.get("MAX_PATCH_ATTEMPTS", 5))
+            # MAX_PATCH_ATTEMPTS = int(os.environ.get("MAX_PATCH_ATTEMPTS", 5))
 
-            # Create sandbox clone
-            temp_repo_path = create_temp_repo(repo_path)
+            # # Create sandbox clone
+            # temp_repo_path = create_temp_repo(repo_path)
 
             # Attempt patch loop
-            valid_patch = attempt_patch_loop(
-                context=context,
-                all_findings=findings,
-                patcher=patcher,
-                temp_repo_path=temp_repo_path,
-                original_file_path=file,
-                patched_file_path=file,
-                max_attempts=MAX_PATCH_ATTEMPTS,
-            )
+            # valid_patch = attempt_patch_loop(
+            #     context=context,
+            #     all_findings=findings,
+            #     patcher=patcher,
+            #     temp_repo_path=temp_repo_path,
+            #     original_file_path=file,
+            #     patched_file_path=file,
+            #     max_attempts=MAX_PATCH_ATTEMPTS,
+            # )
 
-            if not valid_patch:
-                print(f"No valid patch generated for {file}")
-                shutil.rmtree(temp_repo_path)
-                continue
+            # if not valid_patch:
+            #     print(f"No valid patch generated for {file}")
+            #     shutil.rmtree(temp_repo_path)
+            #     continue
 
-            create_patch_pr(
-                repo_path=repo_path,
-                finding=finding,
-                file=file,
-                patch=valid_patch,
-                base_ref=base_ref,
-            )
+            # create_patch_pr(
+            #     repo_path=repo_path,
+            #     finding=finding,
+            #     file=file,
+            #     patch=valid_patch,
+            #     base_ref=base_ref,
+            # )
 
-            shutil.rmtree(temp_repo_path)
+            # shutil.rmtree(temp_repo_path)
 
 
 if __name__ == "__main__":

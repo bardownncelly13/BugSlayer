@@ -2,6 +2,7 @@ import os
 import json
 import re
 from typing import List, Dict, Optional
+import subprocess
 from collections import defaultdict
 
 try:
@@ -59,20 +60,27 @@ def _extract_json(text: str) -> str:
 
 def grep_function(filepath: str, function_name: str):
 
-    if function_name == "GLOBAL_SCOPE":
+    if not function_name or function_name == "GLOBAL_SCOPE":
         return None
 
-    try:
-        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
-            for i, line in enumerate(f, 1):
+    name = function_name.split("(")[0]
 
-                if function_name in line:
-                    return i
+    pattern = rf"(def|function|func)\s+{name}\b|{name}\s*\("
+
+    try:
+        proc = subprocess.run(
+            ["grep", "-nEm1", pattern, filepath],
+            capture_output=True,
+            text=True
+        )
+
+        if not proc.stdout:
+            return None
+
+        return int(proc.stdout.split(":", 1)[0])
 
     except Exception:
         return None
-
-    return None
 
 
 def grep_snippet(filepath: str, snippet: str):
@@ -84,17 +92,43 @@ def grep_snippet(filepath: str, snippet: str):
 
     try:
         with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read()
 
-            for i, line in enumerate(f, 1):
+        idx = text.find(snippet)
 
-                if snippet in line:
-                    return i
+        if idx == -1:
+            return None
+
+        return text[:idx].count("\n") + 1
+
+    except Exception:
+        return None
+
+def grep_function_class(filepath: str, function_line: int):
+
+    if not function_line:
+        return None
+
+    try:
+        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+
+        for i in range(function_line - 1, -1, -1):
+
+            line = lines[i].strip()
+
+            m = re.match(r"class\s+([A-Za-z0-9_]+)", line)
+
+            if m:
+                return m.group(1)
+
+            if line.startswith("def "):
+                break
 
     except Exception:
         return None
 
     return None
-
 
 # ------------------------------------------------------------
 # Gemini Scan (Per File)
@@ -122,6 +156,7 @@ Schema:
 [
   {{
     "function": "function name exactly as given do not give info about the class it is in this needs to be exact so it can be found with grep example: my_function(arg1, arg2)",
+    "function_class": "class name if the function is inside a class otherwise None",
     "snippet": "exact vulnerable code snippet",
     "issue": "short identifier",
     "message": "short explanation",
@@ -177,12 +212,20 @@ Code:
 
         func_line = grep_function(filepath, function)
         snippet_line = grep_snippet(filepath, snippet)
+        func_class = item.get("function_class")
+
+        if func_class in ("None", "", "null"):
+            func_class = None
+
+        if not func_class:
+            func_class = grep_function_class(filepath, func_line)
 
         findings.append(
             {
                 "path": filepath,
                 "function": function,
                 "function_line": func_line,
+                "function_class": func_class,
                 "snippet": snippet,
                 "snippet_line": snippet_line,
                 "issue": item.get("issue"),
@@ -306,6 +349,7 @@ def print_gemini_findings(findings: Dict[str, List[Dict]]):
             print(f"  Vulnerability {vuln_idx}")
             print(f"    Function: {f.get('function')}")
             print(f"    Function Line: {f.get('function_line')}")
+            print(f"    Function Class: {f.get('function_class')}")
             print(f"    Snippet: {f.get('snippet')}")
             print(f"    Snippet Line: {f.get('snippet_line')}")
             print(f"    Issue: {f.get('issue')}")
@@ -342,6 +386,7 @@ def gemini_findings_to_json(findings: Dict[str, List[Dict]]) -> str:
                 "vulnerability_number": vuln_idx,
                 "function": f.get("function"),
                 "function_line": f.get("function_line"),
+                "function_class": f.get("function_class"),
                 "snippet": f.get("snippet"),
                 "snippet_line": f.get("snippet_line"),
                 "issue": f.get("issue"),

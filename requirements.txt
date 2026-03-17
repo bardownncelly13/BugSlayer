@@ -4,3 +4,5 @@ openai
 semgrep
 PyGithub>=2.1
 google-genai
+tree_sitter>=0.22
+neo4j>=5.12
