@@ -45,6 +45,8 @@ Multiple replacements (use when the fix requires several edits in the same file,
 Rules:
 - Each "old" MUST appear verbatim in the file; list them in the order they appear in the file (top to bottom) so they can be applied correctly.
 - Prefer a single replacement when possible; use multiple only when necessary (e.g. adding an import and fixing the vulnerable line).
+- Multi-line replacements are allowed. In JSON, represent line breaks inside the "old" and "new" strings using the escaped sequence `\\n` (example: `"new": "line1();\\nline2();"`).
+- If `old` is a single line and `new` expands to multiple lines, ensure each subsequent line is indented to match the original line's indentation (the patcher also tries to preserve indentation, but this makes results more reliable).
 
 Previous failed attempts (do NOT repeat these changes):
 {failure_msg}

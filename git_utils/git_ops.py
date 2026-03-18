@@ -327,8 +327,32 @@ def apply_patch(repo_path, file_path, replacements):
             raise ValueError(
                 f"Patch anchor not found in {file_path} (replacement {i + 1}/{len(pairs)})"
             )
+        new_adjusted = new
+
+        # Heuristic: if we're replacing a *single* line with *multiple* lines, and the
+        # LLM omitted the original leading indentation in `old`, then prefix the
+        # indentation from the matched location to subsequent `new` lines.
+        #
+        # This avoids cases like:
+        #   file: "    foo();"
+        #   old:  "foo();"
+        #   new:  "foo();\nbar();"
+        # where `bar();` would otherwise become unindented.
+        if "\n" in new and "\n" not in old:
+            if old and old[0] not in " \t":
+                line_start = content.rfind("\n", 0, start) + 1
+                indent = content[line_start:start]
+                if indent:
+                    new_lines = new.split("\n")
+                    for j in range(1, len(new_lines)):
+                        nl = new_lines[j]
+                        # Don't indent already-indented lines or empty lines.
+                        if nl and nl[0] not in " \t":
+                            new_lines[j] = indent + nl
+                    new_adjusted = "\n".join(new_lines)
+
         # Store (start, end, new) so we can replace content[start:end] with new
-        positions.append((start, end, new))
+        positions.append((start, end, new_adjusted))
 
     # Apply in reverse order by position so offsets stay valid
     positions.sort(key=lambda x: x[0], reverse=True)
@@ -472,39 +496,39 @@ def create_patch_pr(repo_path, finding, file, patch, base_ref):
         stage_files(repo_path, files_changed)
         commit_changes(repo_path, commit_message, author="LLM Bot <bot@example.com>")
 
-        #CONFOG AZURE so it doesnt ask for PAT again
+        # CONFIG AZURE so it doesnt ask for PAT again
         configure_azure_git_auth(repo_path)
         # Push
-    #     push_branch(repo_path, branch_name)
+        push_branch(repo_path, branch_name)
 
-    #     # Create PR
-    #     head = branch_name
-    #     base = base_ref.replace("origin/", "")
-    #     title = f"Fix {finding['check_id']} in {file}"
-    #     body = f"""
-    #     ### Security Fix (Automated) 
+        # Create PR
+        head = branch_name
+        base = base_ref.replace("origin/", "")
+        title = f"Fix {finding['check_id']} in {file}"
+        body = f"""
+        ### Security Fix (Automated) 
         
-    #     **Rule:** `{finding['check_id']}`  
-    #     **File:** `{file}`  
-    #     **Severity:** `{finding.get('extra', {}).get('severity', 'unknown')}`  
-    #     **Risk Assessment:** `{patch.risk}`
+        **Rule:** `{finding['check_id']}`  
+        **File:** `{file}`  
+        **Severity:** `{finding.get('extra', {}).get('severity', 'unknown')}`  
+        **Risk Assessment:** `{patch.risk}`
         
-    #     ---
+        ---
         
-    #     ### Patch Summary
-    #     This PR applies a minimal, targeted fix to remediate the detected vulnerability.
+        ### Patch Summary
+        This PR applies a minimal, targeted fix to remediate the detected vulnerability.
         
-    #     - Exactly one code replacement
-    #     - No unrelated logic changed
-    #     - Generated automatically by the remediation agent
+        - Exactly one code replacement
+        - No unrelated logic changed
+        - Generated automatically by the remediation agent
         
-    #     ---
+        ---
         
-    #     ### Review Notes
-    #     {"Manual review required." if patch.requires_human else "Low-risk change; manual review optional."}
-    # """
-    #     # print(f"BASE (This should be a branch name): {base}")
-    #     create_pr(repo_path, head, base, title, body)
+        ### Review Notes
+        {"Manual review required." if patch.requires_human else "Low-risk change; manual review optional."}
+    """
+        # print(f"BASE (This should be a branch name): {base}")
+        create_pr(repo_path, head, base, title, body)
     except Exception as e:
         print(f"create_patch_pr failed with error {e}")
     finally:
@@ -528,3 +552,72 @@ def create_temp_repo(repo_path: str) -> str:
     )
 
     return temp_dir
+
+
+if __name__ == "__main__":
+    # Lightweight self-tests for apply_patch().
+    # Run with: `python git_utils/git_ops.py`
+
+    def run_case(case_name: str, initial: str, replacements, expected: str):
+        with tempfile.TemporaryDirectory(prefix="git_ops_test_") as td:
+            file_name = "test.txt"
+            file_path = os.path.join(td, file_name)
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(initial)
+
+            apply_patch(
+                repo_path=td,
+                file_path=file_name,  # repo-relative path
+                replacements=replacements,
+            )
+
+            with open(file_path, "r", encoding="utf-8") as f:
+                actual = f.read()
+
+            if actual != expected:
+                raise AssertionError(
+                    f"{case_name} failed.\n"
+                    f"Expected:\n{expected!r}\n"
+                    f"Actual:\n{actual!r}\n"
+                )
+
+    cases = [
+        (
+            "indent_preserve_1line_old_to_multiline_new",
+            "    foo();\n    baz();\n",
+            [("foo();", "foo();\nbar();")],
+            "    foo();\n    bar();\n    baz();\n",
+        ),
+        (
+            "indent_preserve_when_new_lines_already_indented",
+            "    foo();\n    baz();\n",
+            [("foo();", "foo();\n    bar();")],
+            "    foo();\n    bar();\n    baz();\n",
+        ),
+        (
+            "no_double_indent_when_old_includes_indent",
+            "    foo();\n    baz();\n",
+            [("    foo();", "    foo();\n    bar();")],
+            "    foo();\n    bar();\n    baz();\n",
+        ),
+        (
+            "no_indent_added_when_file_has_no_indent",
+            "foo();\n",
+            [("foo();", "foo();\nbar();")],
+            "foo();\nbar();\n",
+        ),
+        (
+            "tab_indent_preserve",
+            "\tfoo();\n\tbaz();\n",
+            [("foo();", "foo();\nbar();")],
+            "\tfoo();\n\tbar();\n\tbaz();\n",
+        ),
+    ]
+
+    try:
+        for name, initial, replacements, expected in cases:
+            run_case(name, initial, replacements, expected)
+        print("apply_patch self-tests: OK")
+    except Exception as e:
+        print(f"apply_patch self-tests: FAIL\n{e}")
+        raise
