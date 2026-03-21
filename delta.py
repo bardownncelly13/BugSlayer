@@ -1,4 +1,5 @@
 from pathlib import Path
+from path_utils import normalize_path_for_runtime
 
 def extract_relevant_diff(diff: str, line: int, context_lines: int = 3) -> str:
     """
@@ -31,7 +32,10 @@ def normalize_repo_relative(file_path, repo_root):
     If file_path is relative, it is interpreted relative to repo_root (not cwd).
     """
     repo_abs = Path(repo_root).resolve()
-    path = Path(file_path)
+
+    normalized = normalize_path_for_runtime(file_path, resolve_relative=False)
+    path = Path(normalized)
+
     if path.is_absolute():
         rel = path.resolve().relative_to(repo_abs)
     else:

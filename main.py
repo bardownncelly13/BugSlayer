@@ -4,7 +4,13 @@ from strategies.patch import PatchStrategy
 from dotenv import load_dotenv
 from strategies.triage import TriageStrategy
 from strategies.patch import PatchStrategy
-from git_utils.git_ops import create_patch_pr, get_diff_for_file, create_temp_repo
+from git_utils.git_ops import (
+    create_patch_pr,
+    get_diff_for_file,
+    create_temp_repo,
+    resolve_effective_base_ref,
+    resolve_pr_base_branch,
+)
 from delta import extract_relevant_diff, normalize_repo_relative
 from patch_validation import attempt_patch_loop
 from pathlib import Path
@@ -12,39 +18,44 @@ import os
 import argparse
 import shutil
 from time import ctime
+from path_utils import normalize_path_for_runtime
 
 def main(repo_path: str = ".", semgrep_config: str = None, base_ref: str = "origin/main", head_ref: str = "HEAD"):
-    repo_path = str(Path(repo_path).resolve())
+    repo_path = normalize_path_for_runtime(repo_path)
+    effective_base_ref = resolve_effective_base_ref(repo_path, base_ref)
+    pr_base_branch = resolve_pr_base_branch(repo_path, effective_base_ref)
+    print(f"[DEBUG] requested base_ref={base_ref!r}, effective_base_ref={effective_base_ref!r}, pr_base_branch={pr_base_branch!r}")
+
     triage = TriageStrategy()
     patcher = PatchStrategy()
-    findings = semgrep_scan(repo_path=repo_path, semgrep_config=semgrep_config, base_ref=base_ref, head_ref=head_ref)
+    findings = semgrep_scan(repo_path=repo_path, semgrep_config=semgrep_config, base_ref=effective_base_ref, head_ref=head_ref)
     print_findings(findings)
 
     # If a Gemini API key is configured, run a complementary LLM-based scan
     # over the same repository (changed files when base_ref provided).
-    if os.getenv("GEMINI_API_KEY"):
-        try:
-            from scanners.flashscan import gemini_scan, print_gemini_findings, gemini_findings_to_json
+    # if os.getenv("GEMINI_API_KEY"):
+    #     try:
+    #         from scanners.flashscan import gemini_scan, print_gemini_findings, gemini_findings_to_json
 
-            try:
-                gemini_findings = gemini_scan(repo_path=repo_path, base_ref=base_ref, head_ref=head_ref)
-                print_gemini_findings(gemini_findings)
-                if gemini_findings:
-                    print("\n=== Gemini Results (JSON) ===\n")
-                    print(gemini_findings_to_json(gemini_findings))
-            except Exception as e:
-                print(f"Gemini scan failed: {e}")
-        except Exception:
-            # If flashscan or its optional deps are unavailable, continue silently
-            print("Gemini scanner not available (missing dependency or import error)")
-    else:
-        print("no geminai api key")
+    #         try:
+    #             gemini_findings = gemini_scan(repo_path=repo_path, base_ref=effective_base_ref, head_ref=head_ref)
+    #             print_gemini_findings(gemini_findings)
+    #             if gemini_findings:
+    #                 print("\n=== Gemini Results (JSON) ===\n")
+    #                 print(gemini_findings_to_json(gemini_findings))
+    #         except Exception as e:
+    #             print(f"Gemini scan failed: {e}")
+    #     except Exception:
+    #         # If flashscan or its optional deps are unavailable, continue silently
+    #         print("Gemini scanner not available (missing dependency or import error)")
+    # else:
+    #     print("no geminai api key")
 
     # For each finding, run triage and (if real) propose a patch
     for file, file_findings in findings.items():
         # print("Inside loop")
         try:
-            file_diff = get_diff_for_file(file, base_ref=base_ref, repo_path=repo_path)
+            file_diff = get_diff_for_file(file, base_ref=effective_base_ref, repo_path=repo_path)
             # print(f"file diff was extracted as: {file_diff}")
         except Exception as e:
             print(f"get diff for file: {file} failed with exception {e}")
@@ -116,7 +127,7 @@ def main(repo_path: str = ".", semgrep_config: str = None, base_ref: str = "orig
                 finding=finding,
                 file=file,
                 patch=valid_patch,
-                base_ref=base_ref,
+                pr_base_branch=pr_base_branch,
             )
             shutil.rmtree(temp_repo_path)
     print(f"Finished at {ctime()}")

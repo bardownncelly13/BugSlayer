@@ -6,6 +6,7 @@ import tempfile
 import requests
 from github import Github
 from delta import normalize_repo_relative
+from path_utils import normalize_path_for_runtime
 
 
 
@@ -190,6 +191,112 @@ def get_changed_files(base_ref: str = "origin/main") -> List[str]:
         check=True,
     )
     return [f for f in result.stdout.splitlines() if f.strip()]
+
+
+def _git_ref_exists(repo_path: str, ref: str) -> bool:
+    repo_path = normalize_path_for_runtime(repo_path)
+    proc = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", ref],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+    )
+    return proc.returncode == 0
+
+
+def get_current_branch_name(repo_path: str) -> str:
+    """
+    Return the current branch name. If HEAD is detached, try origin/HEAD,
+    then fall back to main/master when available.
+    """
+    repo_path = normalize_path_for_runtime(repo_path)
+    current = run_git(["rev-parse", "--abbrev-ref", "HEAD"], repo_path).stdout.strip()
+    if current and current != "HEAD":
+        return current
+
+    # Detached HEAD in CI: use the remote default branch if available.
+    try:
+        sym = run_git(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], repo_path).stdout.strip()
+        if sym.startswith("origin/"):
+            return sym.replace("origin/", "", 1)
+    except Exception:
+        pass
+
+    if _git_ref_exists(repo_path, "main"):
+        return "main"
+    if _git_ref_exists(repo_path, "master"):
+        return "master"
+    raise RuntimeError("Unable to determine current/default branch name.")
+
+
+def resolve_effective_base_ref(repo_path: str, base_ref: str) -> str:
+    """
+    Resolve a usable diff base ref.
+
+    Preference order:
+    1) requested base_ref
+    2) local/remote counterpart (origin/main <-> main)
+    3) main/master variants
+    4) HEAD~1 fallback
+    """
+    repo_path = normalize_path_for_runtime(repo_path)
+    candidates = [base_ref]
+
+    if base_ref.startswith("origin/"):
+        local_name = base_ref.replace("origin/", "", 1)
+        candidates.append(local_name)
+    else:
+        candidates.append(f"origin/{base_ref}")
+
+    # main/master fallback variants
+    if "main" in base_ref:
+        candidates.extend([
+            base_ref.replace("main", "master"),
+            "main",
+            "origin/main",
+            "master",
+            "origin/master",
+        ])
+    elif "master" in base_ref:
+        candidates.extend([
+            base_ref.replace("master", "main"),
+            "master",
+            "origin/master",
+            "main",
+            "origin/main",
+        ])
+
+    seen = set()
+    ordered = []
+    for c in candidates:
+        if c not in seen:
+            seen.add(c)
+            ordered.append(c)
+
+    for ref in ordered:
+        if _git_ref_exists(repo_path, ref):
+            return ref
+
+    if _git_ref_exists(repo_path, "HEAD~1"):
+        return "HEAD~1"
+
+    raise RuntimeError(
+        f"Could not resolve a usable base ref from '{base_ref}' and HEAD~1 is unavailable."
+    )
+
+
+def resolve_pr_base_branch(repo_path: str, effective_base_ref: str) -> str:
+    """
+    Resolve a branch name suitable for PR target.
+    """
+    repo_path = normalize_path_for_runtime(repo_path)
+    if effective_base_ref == "HEAD~1":
+        return get_current_branch_name(repo_path)
+    if effective_base_ref.startswith("origin/"):
+        return effective_base_ref.replace("origin/", "", 1)
+    if effective_base_ref in ("main", "master"):
+        return effective_base_ref
+    return get_current_branch_name(repo_path)
 
 
 def get_diff_for_file(path: str, base_ref: str = "origin/main", repo_path: str = ".") -> str:
@@ -471,7 +578,7 @@ def _generate_unique_branch_name(repo_path, base_name):
         counter += 1
 
 
-def create_patch_pr(repo_path, finding, file, patch, base_ref):
+def create_patch_pr(repo_path, finding, file, patch, pr_base_branch):
     original_branch = run_git(
         ["rev-parse", "--abbrev-ref", "HEAD"],
         repo_path
@@ -485,25 +592,25 @@ def create_patch_pr(repo_path, finding, file, patch, base_ref):
         files_changed = [file]
 
         # Apply patch locally
-        create_branch(repo_path, branch_name)
+        # create_branch(repo_path, branch_name)
 
-        apply_patch(
-            repo_path=repo_path,
-            file_path=file,
-            replacements=patch.replacements,
-        )
+        # apply_patch(
+        #     repo_path=repo_path,
+        #     file_path=file,
+        #     replacements=patch.replacements,
+        # )
 
-        stage_files(repo_path, files_changed)
-        commit_changes(repo_path, commit_message, author="LLM Bot <bot@example.com>")
+        # stage_files(repo_path, files_changed)
+        # commit_changes(repo_path, commit_message, author="LLM Bot <bot@example.com>")
 
-        # CONFIG AZURE so it doesnt ask for PAT again
-        configure_azure_git_auth(repo_path)
-        # Push
-        push_branch(repo_path, branch_name)
+        # # CONFIG AZURE so it doesnt ask for PAT again
+        # configure_azure_git_auth(repo_path)
+        # # Push
+        # push_branch(repo_path, branch_name)
 
         # Create PR
         head = branch_name
-        base = base_ref.replace("origin/", "")
+        base = pr_base_branch
         title = f"Fix {finding['check_id']} in {file}"
         body = f"""
         ### Security Fix (Automated) 
@@ -527,8 +634,13 @@ def create_patch_pr(repo_path, finding, file, patch, base_ref):
         ### Review Notes
         {"Manual review required." if patch.requires_human else "Low-risk change; manual review optional."}
     """
+        print(f"Creating PR for {file}")
+        print(f"Title: {title}")
+        print(f"Body: {body}")
+        print(f"Head: {head}")
+        print(f"Base: {base}")
         # print(f"BASE (This should be a branch name): {base}")
-        create_pr(repo_path, head, base, title, body)
+        # create_pr(repo_path, head, base, title, body)
     except Exception as e:
         print(f"create_patch_pr failed with error {e}")
     finally:
