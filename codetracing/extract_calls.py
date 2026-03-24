@@ -15,7 +15,7 @@ from tree_sitter import Parser, Language
 
 warnings.filterwarnings("ignore", message="int argument support is deprecated", category=DeprecationWarning)
 
-LIB_PATH = "/home/kali/Documents/BugStorm/BugSlayer/codetracing/parsers/build/my-languages.so"
+LIB_PATH = os.path.join(os.path.dirname(__file__), "parsers", "build", "my-languages.so")
 
 LANG_MAP = {
     ".py": "python",

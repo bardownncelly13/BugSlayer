@@ -17,7 +17,7 @@ warnings.filterwarnings(
     category=DeprecationWarning,
 )
 
-LIB_PATH = "/home/kali/Documents/BugStorm/BugSlayer/codetracing/parsers/build/my-languages.so"
+LIB_PATH = os.path.join(os.path.dirname(__file__), "parsers", "build", "my-languages.so")
 
 LANG_MAP = {
     ".py": "python",
