@@ -66,14 +66,14 @@ def upsert_record(tx, repo_name, repo_root, rec):
     )
 
 
-def main():
+def run_ingest_funcs(jsonl_file: str):
     driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASS))
 
     total = 0
     with driver.session() as session:
         session.execute_write(ensure_schema)
 
-        with open(INPUT_JSONL, "r", encoding="utf-8") as fh:
+        with open(jsonl_file, "r", encoding="utf-8") as fh:
             for line in fh:
                 line = line.strip()
                 if not line:
@@ -88,6 +88,10 @@ def main():
                 total += 1
 
     driver.close()
+
+
+def main():
+    run_ingest_funcs(INPUT_JSONL)
     print(f"Ingested {total} functions.")
 
 

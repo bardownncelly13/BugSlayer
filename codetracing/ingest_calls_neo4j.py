@@ -103,6 +103,7 @@ def create_callsite(tx, rec):
 def resolve_same_file_unique(tx, rec) -> bool:
     """
     If exactly one function in same file matches callee_name, resolve.
+    Also treat ClassName() as a constructor call to ClassName.__init__.
     """
     callee_name = rec.get("callee_name") or ""
     if not callee_name:
@@ -110,7 +111,9 @@ def resolve_same_file_unique(tx, rec) -> bool:
 
     rows = tx.run(
         """
-        MATCH (callee:Function {path:$file, name:$name})
+        MATCH (callee:Function {path:$file})
+        WHERE callee.name = $name
+           OR (callee.container = $name AND callee.name = "__init__")
         RETURN callee.key AS key
         """,
         file=rec["file"],
@@ -163,11 +166,15 @@ def resolve_python_import_unique(tx, rec) -> bool:
         rows = tx.run(
             """
             MATCH (callee:Function)
-            WHERE callee.path IN $paths AND callee.name = $name
+            WHERE callee.path IN $paths
+              AND (
+                callee.name = $name
+                OR (callee.container = $name AND callee.name = "__init__")
+              )
             RETURN callee.key AS key
             """,
             paths=candidate_paths,
-            name=callee_name if callee_name else "",
+            name=callee_name,
         ).data()
 
         if len(rows) == 1:
@@ -238,14 +245,14 @@ def resolve_python_import_unique(tx, rec) -> bool:
 
     return False
 
-def main():
+def run_ingest_calls(jsonl_file: str):
     driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASS))
     total = 0
 
     with driver.session() as session:
         session.execute_write(ensure_schema)
 
-        with open(INPUT_JSONL, "r", encoding="utf-8") as f:
+        with open(jsonl_file, "r", encoding="utf-8") as f:
             for line in f:
                 rec = json.loads(line)
 
@@ -261,6 +268,10 @@ def main():
 
     driver.close()
     print("ingested callsites:", total)
+
+
+def main():
+    run_ingest_calls(INPUT_JSONL)
 
 if __name__ == "__main__":
     main()

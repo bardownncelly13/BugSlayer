@@ -142,16 +142,8 @@ def iter_calls(tree, source: bytes, rel_path: str, lang: str):
         for child in node.children:
             stack.append((child, current_fn))
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--repo", default=None, help="Repo path (default: git root)")
-    ap.add_argument("--out", default="-", help="JSONL output (default: stdout)")
-    args = ap.parse_args()
-
-    repo_root = os.path.abspath(args.repo or get_git_root("."))
-
-    out_f = sys.stdout if args.out == "-" else open(args.out, "w", encoding="utf-8")
-    try:
+def run_extract_calls(repo_root: str, out_file: str):
+    with open(out_file, "w", encoding="utf-8") as out_f:
         for root, dirs, files in os.walk(repo_root):
             dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
             for file in files:
@@ -177,9 +169,48 @@ def main():
 
                 except Exception:
                     pass
-    finally:
-        if out_f is not sys.stdout:
-            out_f.close()
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--repo", default=None, help="Repo path (default: git root)")
+    ap.add_argument("--out", default="-", help="JSONL output (default: stdout)")
+    args = ap.parse_args()
+
+    repo_root = os.path.abspath(args.repo or get_git_root("."))
+
+    if args.out == "-":
+        out_f = sys.stdout
+        try:
+            for root, dirs, files in os.walk(repo_root):
+                dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+                for file in files:
+                    ext = os.path.splitext(file)[1]
+                    if ext not in LANG_MAP:
+                        continue
+
+                    abs_path = os.path.join(root, file)
+                    rel_path = os.path.relpath(abs_path, repo_root)
+
+                    try:
+                        if os.stat(abs_path).st_size > MAX_BYTES:
+                            continue
+
+                        lang = LANG_MAP[ext]
+                        with open(abs_path, "rb") as f:
+                            src = f.read()
+
+                        tree = PARSERS[lang].parse(src)
+
+                        for rec in iter_calls(tree, src, rel_path, lang):
+                            print(json.dumps(rec, ensure_ascii=False), file=out_f)
+
+                    except Exception:
+                        pass
+        finally:
+            pass
+    else:
+        run_extract_calls(repo_root, args.out)
 
 if __name__ == "__main__":
     main()

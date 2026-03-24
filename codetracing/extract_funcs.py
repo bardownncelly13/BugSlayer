@@ -191,6 +191,16 @@ def clone_to_temp(git_url_or_path: str) -> str:
         return temp_dir
 
 
+def run_extract_funcs(repo_root: str, out_file: str):
+    data, stats = parse_repo(repo_root)
+
+    with open(out_file, "w", encoding="utf-8") as out_f:
+        for rec in data:
+            print(json.dumps(rec, ensure_ascii=False), file=out_f)
+
+    print(json.dumps({"_stats": stats, "repo_root": repo_root}, ensure_ascii=False), file=sys.stderr)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--repo", default=".", help="Local repo path to scan (default: git root if inside a repo)")
@@ -211,15 +221,16 @@ def main():
         # If --repo is '.', scan git root (not just current subdir)
         repo_root = get_git_root(args.repo) if args.repo == "." else os.path.abspath(args.repo)
 
-    data, stats = parse_repo(repo_root)
-
-    out_f = sys.stdout if args.out == "-" else open(args.out, "w", encoding="utf-8")
-    try:
-        for rec in data:
-            print(json.dumps(rec, ensure_ascii=False), file=out_f)
-    finally:
-        if out_f is not sys.stdout:
-            out_f.close()
+    if args.out == "-":
+        out_f = sys.stdout
+        try:
+            data, stats = parse_repo(repo_root)
+            for rec in data:
+                print(json.dumps(rec, ensure_ascii=False), file=out_f)
+        finally:
+            pass
+    else:
+        run_extract_funcs(repo_root, args.out)
 
     print(json.dumps({"_stats": stats, "repo_root": repo_root}, ensure_ascii=False), file=sys.stderr)
 
