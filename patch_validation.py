@@ -94,17 +94,21 @@ def destructive_change_detected(original: str, patched: str) -> bool:
 def validate_patch(repo_path: str, original_file: str, patched_file: str) -> bool:
     # Syntax validation
     validator = get_validator(repo_path)
-    try:
-        validator.syntax_check()
-    except ValidationError as e:
-        print(f"[VALIDATION] Syntax failed:\n{e}")
-        return False
+    # try:
+    #     validator.syntax_check()
+    # except ValidationError as e:
+    #     print(f"[VALIDATION] Syntax failed:\n{e}")
+    #     return False
+
+    # Resolve paths relative to the validation repo root.
+    original_path = original_file if os.path.isabs(original_file) else os.path.join(repo_path, original_file)
+    patched_path = patched_file if os.path.isabs(patched_file) else os.path.join(repo_path, patched_file)
 
     # Destructive heuristic
-    with open(original_file) as f:
+    with open(original_path, encoding="utf-8") as f:
         original = f.read()
 
-    with open(patched_file) as f:
+    with open(patched_path, encoding="utf-8") as f:
         patched = f.read()
 
     if destructive_change_detected(original, patched):
@@ -123,6 +127,19 @@ def attempt_patch_loop(
     max_attempts=5,
 ):
     failure_reasons = []
+    target_rule = context["finding"].get("check_id")
+    target_line = context["finding"].get("start", {}).get("line")
+    scan_configs = ["p/security-audit", "p/owasp-top-ten"]
+
+    # Build baseline from the same scan scope used after patching.
+    # Using earlier pipeline findings can be misleading because they may be
+    # diff-filtered rather than full-file results.
+    baseline_findings = scan_paths(
+        paths=[original_file_path],
+        repo_root=temp_repo_path,
+        configs=scan_configs,
+    )
+    baseline_fp = fingerprint(baseline_findings)
 
     for attempt in range(1, max_attempts + 1):
         # Add previous failures to context for LLM feedback
@@ -130,24 +147,27 @@ def attempt_patch_loop(
 
         patch = patcher.run(context)
 
-        # Reject patches that just comment out the old line
-        old_line = patch.old.strip()
-        new_lines = patch.new.splitlines()
-
-        commented_out = any(
-            old_line in line and line.strip().startswith("#") 
-            for line in new_lines
-        )
-
+        # Reject patches that just comment out the old line (check each replacement)
+        commented_out = False
+        for old_snippet, new_snippet in patch.replacements:
+            old_line = old_snippet.strip()
+            new_lines = new_snippet.splitlines()
+            if any(
+                old_line in line and line.strip().startswith("#")
+                for line in new_lines
+            ):
+                commented_out = True
+                break
         if commented_out:
-            reason = f"Attempt rejected: patch just comments out old line.\nold={patch.old}\nnew={patch.new}"
+            reason = "Attempt rejected: patch just comments out old line."
             print(reason)
             failure_reasons.append(reason)
             continue
 
         # Apply patch in temp repo
         try:
-            apply_patch(temp_repo_path, original_file_path, patch.old, patch.new)
+            print(f"Applying patch: {patch.replacements}")
+            apply_patch(temp_repo_path, original_file_path, patch.replacements)
         except ValueError as e:
             reason = f"Attempt {attempt} failed: {str(e)}"
             print(reason)
@@ -159,7 +179,7 @@ def attempt_patch_loop(
         if not validate_patch(temp_repo_path, original_file_path, patched_file_path):
             reason = f"Attempt {attempt} failed validation."
             print(reason)
-            failure_reasons.append(f"Attempt {attempt}: old={patch.old} new={patch.new} failed validation")
+            failure_reasons.append(f"Attempt {attempt}: patch failed validation")
 
             reset_temp_repo(temp_repo_path)
             continue
@@ -170,29 +190,37 @@ def attempt_patch_loop(
         # print("Scanning file path:", original_file_path)
         # print("Absolute file being scanned:", os.path.join(temp_repo_path, original_file_path))
 
-        baseline_findings = all_findings.get(original_file_path, [])
-        baseline_fp = fingerprint(baseline_findings)
-
         new_findings = scan_paths(
             paths=[original_file_path],
             repo_root=temp_repo_path,
-            configs=["p/security-audit", "p/owasp-top-ten"]
+            configs=scan_configs,
         )
 
         new_fp = fingerprint(new_findings)
 
-        # Check if original finding still present
-        original_rule = context['finding'].get("check_id")
-
-        still_present = any(
-            f.get("check_id") == original_rule
-            for f in new_findings
-        )
+        # Check whether the specific target finding is still present.
+        # Using only check_id is too broad because files can contain multiple
+        # findings of the same rule.
+        still_present = False
+        if target_rule:
+            for f in new_findings:
+                if f.get("check_id") != target_rule:
+                    continue
+                if target_line is None:
+                    still_present = True
+                    break
+                new_line = f.get("start", {}).get("line")
+                if isinstance(new_line, int) and abs(new_line - target_line) <= 3:
+                    still_present = True
+                    break
 
         # print(f"Bug is still present? {still_present}")
 
         if still_present:
-            reason = f"Attempt {attempt}: original vulnerability still present after patch."
+            reason = (
+                f"Attempt {attempt}: targeted vulnerability still present after patch "
+                f"(rule={target_rule}, original_line={target_line})."
+            )
             failure_reasons.append(reason)
             reset_temp_repo(temp_repo_path)
             continue

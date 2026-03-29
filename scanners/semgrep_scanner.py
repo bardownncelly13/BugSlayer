@@ -5,7 +5,7 @@ import tempfile
 import os
 import re
 from collections import defaultdict
-from git_utils.git_ops import git_cmd
+from git_utils.git_ops import run_git
 from scanners.utils import group_findings_by_file
 
 
@@ -191,11 +191,20 @@ def scan_with_semgrep(
         return []
 
     data = json.loads(p.stdout)
-    if data.get("errors"):
+    errors = data.get("errors", [])
+
+    # Only treat true fatal errors as fatal
+    fatal_errors = [e for e in errors if e.get("level") == "error"]
+
+    if fatal_errors:
         raise RuntimeError(
-            "Semgrep reported errors in JSON output:\n"
-            + json.dumps(data["errors"], indent=2)
+            "Semgrep reported fatal errors in JSON output:\n"
+            + json.dumps(fatal_errors, indent=2)
         )
+
+    # Optionally log non-fatal issues
+    if errors:
+        print(f"[DEBUG] Semgrep reported {len(errors)} non-fatal issues.")
 
     return data.get("results", [])
 
@@ -203,7 +212,7 @@ def scan_with_semgrep(
 def _has_diff(base_ref: str, head_ref: str, repo_path: str = ".") -> bool:
     print(f"[DEBUG] _has_diff base_ref={base_ref!r}, head_ref={head_ref!r}, repo_path={repo_path!r}")
     try:
-        proc = git_cmd(["diff", "--name-only", f"{base_ref}..{head_ref}"], repo_path)
+        proc = run_git(["diff", "--name-only", f"{base_ref}..{head_ref}"], repo_path)
         print(f"[DEBUG] git diff output:\n{proc.stdout}")
         changed_files = [f for f in proc.stdout.splitlines() if f.strip()]
         print(f"[DEBUG] changed_files={changed_files}")
@@ -257,7 +266,7 @@ def _get_changed_line_ranges(
     head_ref: str,
     repo_path: str = ".",
 ) -> Dict[str, List[Tuple[int, int]]]:
-    proc = git_cmd(["diff", "-U0", f"{base_ref}..{head_ref}"], repo_path)
+    proc = run_git(["diff", "-U0", f"{base_ref}..{head_ref}"], repo_path)
     return _parse_changed_line_ranges(proc.stdout or "")
 
 
