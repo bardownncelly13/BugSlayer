@@ -65,11 +65,11 @@ NEO4J_USER = os.environ.get("NEO4J_USER", "neo4j")
 NEO4J_PASS = os.environ.get("NEO4J_PASS", "password")
 
 FETCH_LIMIT = int(os.environ.get("LLM_MATCH_FETCH", "5000"))
-BATCH_SIZE = int(os.environ.get("LLM_MATCH_BATCHSIZE", "10"))
+BATCH_SIZE = int(os.environ.get("LLM_MATCH_BATCHSIZE", "20"))
 MAX_CANDIDATES = int(os.environ.get("LLM_MATCH_MAX_CANDIDATES", "20"))
 
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
-SLEEP_BETWEEN = float(os.environ.get("GEMINI_SLEEP_BETWEEN", "0.8"))
+SLEEP_BETWEEN = float(os.environ.get("GEMINI_SLEEP_BETWEEN", "60"))
 
 BUILTINS = {
     "print","len","range","tuple","list","dict","set","str","int","float","bool",
@@ -181,36 +181,36 @@ def build_batched_prompt(items: List[Dict]) -> str:
   container: {c.get('container')}
   start_line: {c.get('start_line')}
   snippet:
-{excerpt}
-"""
+    {excerpt}
+    """
+                )
+
+            snippet = (cs.get("snippet") or "")[:1800]
+            blocks.append(
+                f"""callsite_id: {cs['id']}
+    file: {cs['file']}
+    line: {cs['line']}
+    caller_key: {cs['caller_key']}
+    callee_text: {cs['callee_text']}
+    callee_name: {cs.get('callee_name')}
+    language: {cs['language']}
+    callsite_snippet:
+    {snippet}
+
+    candidates:
+    {chr(10).join(cand_blocks)}
+    """
             )
 
-        snippet = (cs.get("snippet") or "")[:1800]
-        blocks.append(
-            f"""callsite_id: {cs['id']}
-file: {cs['file']}
-line: {cs['line']}
-caller_key: {cs['caller_key']}
-callee_text: {cs['callee_text']}
-callee_name: {cs.get('callee_name')}
-language: {cs['language']}
-callsite_snippet:
-{snippet}
+        ids = [it["cs"]["id"] for it in items]
+        joined = "\n---\n".join(blocks)
 
-candidates:
-{chr(10).join(cand_blocks)}
-"""
-        )
+        return f"""Resolve these callsites. Output JSON mapping callsite_id -> chosen_key_or_UNRESOLVED.
 
-    ids = [it["cs"]["id"] for it in items]
-    joined = "\n---\n".join(blocks)
+    callsite_ids: {ids}
 
-    return f"""Resolve these callsites. Output JSON mapping callsite_id -> chosen_key_or_UNRESOLVED.
-
-callsite_ids: {ids}
-
-{joined}
-"""
+    {joined}
+    """
 
 # --------------------------
 # Main
