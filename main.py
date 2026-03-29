@@ -132,6 +132,13 @@ def main(repo_path: str = ".", semgrep_config: str = None, base_ref: str = "orig
             shutil.rmtree(temp_repo_path)
     print(f"Finished at {ctime()}")
 
+    # Exit with code 1 if any findings were detected fo CI integration
+    # CI should fail if we find vulns/push patches 
+    if findings:
+        exit(1)
+    else:
+        exit(0)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
