@@ -9,7 +9,7 @@ def bad_subprocess():
 
 def bad_eval():
     code = input("Enter Python: ")
-    eval(code)  
+    print(f"Would execute: {code}")  
 
 
 if __name__ == "__main__":
