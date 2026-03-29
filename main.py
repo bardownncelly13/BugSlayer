@@ -6,6 +6,7 @@ from strategies.triage import TriageStrategy
 from strategies.patch import PatchStrategy
 from git_utils.git_ops import (
     create_patch_pr,
+    create_failure_pr,
     get_diff_for_file,
     create_temp_repo,
     resolve_effective_base_ref,
@@ -115,6 +116,13 @@ def main(repo_path: str = ".", semgrep_config: str = None, base_ref: str = "orig
 
             if not valid_patch:
                 print(f"No valid patch generated for {file}")
+                # create_failure_pr(
+                #     repo_path=repo_path,
+                #     finding=finding,
+                #     file=file,
+                #     pr_base_branch=pr_base_branch,
+                #     max_attempts=MAX_PATCH_ATTEMPTS,
+                # )
                 shutil.rmtree(temp_repo_path)
                 continue
 
