@@ -129,14 +129,14 @@ def main(repo_path: str = ".", semgrep_config: str = None, base_ref: str = "orig
             #     print(f"[DRY RUN] Would create PR for {file}")
             # else:
             #     print(f"This should not run")
-            create_patch_pr(
-                repo_path=repo_path,
-                finding=finding,
-                file=file,
-                patch=valid_patch,
-                pr_base_branch=pr_base_branch,
-            )
-            shutil.rmtree(temp_repo_path)
+            # create_patch_pr(
+            #     repo_path=repo_path,
+            #     finding=finding,
+            #     file=file,
+            #     patch=valid_patch,
+            #     pr_base_branch=pr_base_branch,
+            # )
+            # shutil.rmtree(temp_repo_path)
     print(f"Finished at {ctime()}")
 
     # Exit with code 1 if any findings were detected fo CI integration

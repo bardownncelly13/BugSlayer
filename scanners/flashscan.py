@@ -12,6 +12,151 @@ except Exception:
 
 from git_utils.git_ops import git_cmd, get_changed_files
 
+# Tree-sitter imports for function extraction (optional)
+TREE_SITTER_AVAILABLE = False
+try:
+    from tree_sitter import Parser, Language
+    import ctypes
+    TREE_SITTER_AVAILABLE = True
+except ImportError:
+    pass
+
+# Tree-sitter setup for function extraction
+if TREE_SITTER_AVAILABLE:
+    LIB_PATH = os.path.join(os.path.dirname(__file__), "..", "codetracing", "parsers", "build", "my-languages.so")
+
+    LANG_MAP = {
+        ".py": "python",
+        ".js": "javascript",
+        ".rs": "rust",
+        ".c": "c",
+        ".h": "c",
+        ".cpp": "cpp",
+        ".hpp": "cpp",
+    }
+
+    FUNCTION_NODE_TYPES = {
+        "python": ("function_definition",),
+        "c": ("function_definition",),
+        "cpp": ("function_definition",),
+        "rust": ("function_item",),
+        "javascript": ("function_declaration", "method_definition", "function", "arrow_function"),
+    }
+
+    _LIBS = {}
+    def load_language(lib_path: str, name: str) -> Language:
+        lib = _LIBS.get(lib_path)
+        if lib is None:
+            lib = ctypes.CDLL(lib_path)
+            _LIBS[lib_path] = lib
+
+        fn = getattr(lib, f"tree_sitter_{name}")
+        fn.restype = ctypes.c_void_p
+        return Language(fn())
+
+    LANGS = {name: load_language(LIB_PATH, name) for name in set(LANG_MAP.values())}
+    PARSERS = {}
+    for name, lang in LANGS.items():
+        p = Parser()
+        p.language = lang
+        PARSERS[name] = p
+
+    def node_text(node, source: bytes) -> str:
+        return source[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
+
+    def extract_functions_from_file(filepath: str) -> List[Dict]:
+        """Extract all functions from a file using tree-sitter."""
+        if not TREE_SITTER_AVAILABLE:
+            return []
+
+        try:
+            with open(filepath, "rb") as f:
+                source = f.read()
+        except Exception:
+            return []
+
+        ext = os.path.splitext(filepath)[1].lower()
+        lang_name = LANG_MAP.get(ext)
+        if not lang_name:
+            return []
+
+        parser = PARSERS.get(lang_name)
+        if not parser:
+            return []
+
+        try:
+            tree = parser.parse(source)
+            root = tree.root_node
+            stack = [(root, None)]
+            functions = []
+
+            fn_types = FUNCTION_NODE_TYPES.get(lang_name, ("function_definition",))
+
+            while stack:
+                node, parent_class = stack.pop()
+
+                if node.type in fn_types:
+                    # Extract function name
+                    func_name = None
+                    start_line = node.start_point[0] + 1
+
+                    # Find the function name identifier
+                    for child in node.children:
+                        if child.type == "identifier" or child.type == "name":
+                            func_name = node_text(child, source)
+                            break
+                        elif lang_name == "python" and child.type == "function":
+                            # Python nested structure
+                            for subchild in child.children:
+                                if subchild.type == "identifier":
+                                    func_name = node_text(subchild, source)
+                                    break
+
+                    if func_name:
+                        functions.append({
+                            "name": func_name,
+                            "line": start_line,
+                            "class": parent_class
+                        })
+
+                # Check for class context
+                current_class = parent_class
+                if node.type in ("class_definition", "class"):
+                    for child in node.children:
+                        if child.type == "identifier" or child.type == "name":
+                            current_class = node_text(child, source)
+                            break
+
+                # Add children to stack
+                for child in reversed(node.children):
+                    stack.append((child, current_class))
+
+            return functions
+
+        except Exception:
+            return []
+
+# Tree-sitter imports for function extraction
+try:
+    from tree_sitter import Parser, Language
+    import ctypes
+    TREE_SITTER_AVAILABLE = True
+except ImportError:
+    TREE_SITTER_AVAILABLE = False
+
+# Tree-sitter setup for function extraction (run after imports)
+if TREE_SITTER_AVAILABLE and not PARSERS:
+    try:
+        LIB_PATH = os.path.join(os.path.dirname(__file__), "..", "codetracing", "parsers", "build", "my-languages.so")
+        LANGS = {name: load_language(LIB_PATH, name) for name in set(LANG_MAP.values())}
+        PARSERS = {}
+        for name, lang in LANGS.items():
+            p = Parser()
+            p.language = lang
+            PARSERS[name] = p
+    except Exception:
+        TREE_SITTER_AVAILABLE = False
+
 
 # ------------------------------------------------------------
 # Gemini Client
@@ -50,6 +195,27 @@ def _extract_json(text: str) -> str:
 
     if end == -1:
         raise ValueError("Invalid JSON")
+
+    return text[start:end + 1]
+
+
+def _extract_json_object(text: str) -> str:
+    """Extract JSON object from text."""
+    text = text.strip()
+
+    if text.startswith("{") and text.endswith("}"):
+        return text
+
+    m = re.search(r"\{", text)
+
+    if not m:
+        raise ValueError("No JSON object found")
+
+    start = m.start()
+    end = text.rfind("}")
+
+    if end == -1:
+        raise ValueError("Invalid JSON object")
 
     return text[start:end + 1]
 
@@ -160,6 +326,8 @@ Entry points are functions that serve as program execution start points, such as
 - Top-level async/module-level calls
 - CLI command handlers
 - Test runners or bootstrap functions
+- Any fucntions that will take input from a user or external system
+
 
 Return ONLY valid JSON with a single boolean value:
 
@@ -182,21 +350,61 @@ Target function: {function_name} (at line {function_line})
                 contents=prompt,
             )
             text = getattr(resp, "text", str(resp))
-        except Exception:
+            print(f"DEBUG: Gemini response for {function_name}: {text[:200]}...")
+        except Exception as e:
+            print(f"DEBUG: Gemini API error for {function_name}: {e}")
             return False
 
         try:
             payload = json.loads(text)
         except Exception:
             try:
-                payload = json.loads(_extract_json(text))
-            except Exception:
+                payload = json.loads(_extract_json_object(text))
+            except Exception as e:
+                print(f"DEBUG: JSON parse error for {function_name}: {e}, text: {text[:200]}")
                 return False
 
-        return payload.get("is_entry_point", False)
+        result = payload.get("is_entry_point", False)
+        print(f"DEBUG: is_entry_point for {function_name}: {result}")
+        return result
 
     except Exception:
         return False
+
+
+def scan_file_for_entry_points(filepath: str, model: str = "gemini-2.0-flash") -> List[Dict]:
+    """Scan a file for all functions and identify which are entry points."""
+    if not TREE_SITTER_AVAILABLE:
+        return []
+
+    try:
+        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+            code = f.read()
+    except Exception:
+        return []
+
+    functions = extract_functions_from_file(filepath)
+    entry_points = []
+
+    for func in functions:
+        func_name = func["name"]
+        func_line = func["line"]
+        func_class = func.get("class")
+
+        # Check if this function is an entry point
+        is_ep = is_entry_point(filepath, func_name, func_line, code, model)
+
+        if is_ep:
+            entry_points.append({
+                "path": filepath,
+                "function": func_name,
+                "function_line": func_line,
+                "function_class": func_class,
+                "is_entry_point": True,
+            })
+
+    return entry_points
+
 
 # ------------------------------------------------------------
 # Gemini Scan (Per File)
@@ -396,6 +604,18 @@ def gemini_scan(
         if file_findings:
             grouped[t].extend(file_findings)
 
+        # Always try to scan for entry points if tree-sitter is available
+        if TREE_SITTER_AVAILABLE:
+            try:
+                entry_points = scan_file_for_entry_points(t)
+                if entry_points:
+                    # Add entry points to the grouped results
+                    if t not in grouped:
+                        grouped[t] = []
+                    grouped[t].extend(entry_points)
+            except Exception:
+                continue
+
     return dict(grouped)
 
 
@@ -415,23 +635,35 @@ def print_gemini_findings(findings: Dict[str, List[Dict]]):
 
         print(f"File {file_idx} - {file}")
 
-        for vuln_idx, f in enumerate(file_findings, 1):
+        vuln_count = 0
+        ep_count = 0
 
-            print(f"  Vulnerability {vuln_idx}")
-            print(f"    Function: {f.get('function')}")
-            print(f"    Function Line: {f.get('function_line')}")
-            print(f"    Function Class: {f.get('function_class')}")
-            print(f"    Is Entry Point: {f.get('is_entry_point', False)}")
-            print(f"    Snippet: {f.get('snippet')}")
-            print(f"    Snippet Line: {f.get('snippet_line')}")
-            print(f"    Issue: {f.get('issue')}")
-            print(f"    Message: {f.get('message')}")
-            print(f"    Severity: {f.get('severity')}")
+        for f in file_findings:
+            if f.get('is_entry_point') and not f.get('issue'):
+                # This is an entry point
+                ep_count += 1
+                print(f"  Entry Point {ep_count}")
+                print(f"    Function: {f.get('function')}")
+                print(f"    Function Line: {f.get('function_line')}")
+                print(f"    Function Class: {f.get('function_class')}")
+                print(f"    Is Entry Point: {f.get('is_entry_point', False)}")
+            else:
+                # This is a vulnerability
+                vuln_count += 1
+                print(f"  Vulnerability {vuln_count}")
+                print(f"    Function: {f.get('function')}")
+                print(f"    Function Line: {f.get('function_line')}")
+                print(f"    Function Class: {f.get('function_class')}")
+                print(f"    Is Entry Point: {f.get('is_entry_point', False)}")
+                print(f"    Snippet: {f.get('snippet')}")
+                print(f"    Snippet Line: {f.get('snippet_line')}")
+                print(f"    Issue: {f.get('issue')}")
+                print(f"    Message: {f.get('message')}")
+                print(f"    Severity: {f.get('severity')}")
 
-            conf = f.get("confidence")
-
-            if conf is not None:
-                print(f"    Confidence: {conf}")
+                conf = f.get("confidence")
+                if conf is not None:
+                    print(f"    Confidence: {conf}")
 
         print()
 
@@ -450,25 +682,41 @@ def gemini_findings_to_json(findings: Dict[str, List[Dict]]) -> str:
             "file_number": file_idx,
             "path": file,
             "vulnerabilities": [],
+            "entry_points": [],
         }
 
-        for vuln_idx, f in enumerate(file_findings, 1):
+        vuln_count = 0
+        ep_count = 0
 
-            vuln_entry = {
-                "vulnerability_number": vuln_idx,
-                "function": f.get("function"),
-                "function_line": f.get("function_line"),
-                "function_class": f.get("function_class"),
-                "is_entry_point": f.get("is_entry_point", False),
-                "snippet": f.get("snippet"),
-                "snippet_line": f.get("snippet_line"),
-                "issue": f.get("issue"),
-                "message": f.get("message"),
-                "severity": f.get("severity"),
-                "confidence": f.get("confidence"),
-            }
-
-            file_entry["vulnerabilities"].append(vuln_entry)
+        for f in file_findings:
+            if f.get('is_entry_point') and not f.get('issue'):
+                # This is an entry point
+                ep_count += 1
+                ep_entry = {
+                    "entry_point_number": ep_count,
+                    "function": f.get("function"),
+                    "function_line": f.get("function_line"),
+                    "function_class": f.get("function_class"),
+                    "is_entry_point": f.get("is_entry_point", False),
+                }
+                file_entry["entry_points"].append(ep_entry)
+            else:
+                # This is a vulnerability
+                vuln_count += 1
+                vuln_entry = {
+                    "vulnerability_number": vuln_count,
+                    "function": f.get("function"),
+                    "function_line": f.get("function_line"),
+                    "function_class": f.get("function_class"),
+                    "is_entry_point": f.get("is_entry_point", False),
+                    "snippet": f.get("snippet"),
+                    "snippet_line": f.get("snippet_line"),
+                    "issue": f.get("issue"),
+                    "message": f.get("message"),
+                    "severity": f.get("severity"),
+                    "confidence": f.get("confidence"),
+                }
+                file_entry["vulnerabilities"].append(vuln_entry)
 
         output.append(file_entry)
 
