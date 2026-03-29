@@ -662,16 +662,16 @@ def create_patch_pr(repo_path, finding, file, patch, pr_base_branch):
         files_changed = [file]
 
         # Apply patch locally
-        # create_branch(repo_path, branch_name)
+        create_branch(repo_path, branch_name)
 
-        # apply_patch(
-        #     repo_path=repo_path,
-        #     file_path=file,
-        #     replacements=patch.replacements,
-        # )
+        apply_patch(
+            repo_path=repo_path,
+            file_path=file,
+            replacements=patch.replacements,
+        )
 
-        # stage_files(repo_path, files_changed)
-        # commit_changes(repo_path, commit_message, author="LLM Bot <bot@example.com>")
+        stage_files(repo_path, files_changed)
+        commit_changes(repo_path, commit_message, author="LLM Bot <bot@example.com>")
 
         # # CONFIG AZURE so it doesnt ask for PAT again
         # configure_azure_git_auth(repo_path)
@@ -785,7 +785,7 @@ def create_failure_pr(repo_path, finding, file, pr_base_branch, max_attempts: in
         commit_changes(repo_path, commit_msg, author="LLM Bot <bot@example.com>")
 
         configure_azure_git_auth(repo_path)
-        push_branch(repo_path, branch_name)
+        # push_branch(repo_path, branch_name)
 
         title = f"Manual remediation needed: {check_id} in {file}"
         body = (
@@ -798,7 +798,7 @@ def create_failure_pr(repo_path, finding, file, pr_base_branch, max_attempts: in
             f"A report was added at `{report_rel}` for manual follow-up.\n\n"
             f"{notes}"
         )
-        create_pr(repo_path, head=branch_name, base=pr_base_branch, title=title, body=body)
+        # create_pr(repo_path, head=branch_name, base=pr_base_branch, title=title, body=body)
         return branch_name
     except Exception as e:
         print(f"create_failure_pr failed with error {e}")
