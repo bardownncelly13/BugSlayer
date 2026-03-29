@@ -1,137 +1,317 @@
 import os
 import json
 import re
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional
+import subprocess
 from collections import defaultdict
 
 try:
     from google import genai
-except Exception:  # pragma: no cover - optional dependency
+except Exception:
     genai = None
 
 from git_utils.git_ops import git_cmd, get_changed_files
 
 
+# ------------------------------------------------------------
+# Gemini Client
+# ------------------------------------------------------------
+
 def _make_gemini_client() -> "genai.Client":
     api_key = os.getenv("GEMINI_API_KEY")
+
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY not configured")
+
     if genai is None:
-        raise RuntimeError("google.genai package not available")
+        raise RuntimeError("google.genai package not installed")
+
     return genai.Client(api_key=api_key)
 
 
+# ------------------------------------------------------------
+# JSON Extraction
+# ------------------------------------------------------------
+
 def _extract_json(text: str) -> str:
-    """Try to extract a JSON array/object from model text output."""
-    # Fast path
+
     text = text.strip()
-    if (text.startswith("[") and text.endswith("]")) or (text.startswith("{") and text.endswith("}")):
+
+    if text.startswith("[") and text.endswith("]"):
         return text
 
-    # Find first { or [ and last matching } or ]
-    m = re.search(r"(\[|\{)", text)
+    m = re.search(r"\[", text)
+
     if not m:
-        raise ValueError("No JSON found in model output")
+        raise ValueError("No JSON found")
+
     start = m.start()
-    # find last brace/bracket
-    last_brace = max(text.rfind("}"), text.rfind("]"))
-    if last_brace == -1:
-        raise ValueError("No JSON end found in model output")
-    return text[start : last_brace + 1]
+    end = text.rfind("]")
+
+    if end == -1:
+        raise ValueError("Invalid JSON")
+
+    return text[start:end + 1]
 
 
-def _parse_response_to_findings(response_text: str, filename: str, line_offset: int = 0) -> List[Dict]:
-    """Parse Gemini response (expects JSON array) into normalized findings."""
+# ------------------------------------------------------------
+# Grep Helpers
+# ------------------------------------------------------------
+
+def grep_function(filepath: str, function_name: str):
+
+    if not function_name or function_name == "GLOBAL_SCOPE":
+        return None
+
+    name = function_name.split("(")[0]
+
+    pattern = rf"(def|function|func)\s+{name}\b|{name}\s*\("
+
     try:
-        payload = json.loads(response_text)
-    except Exception:
-        # try to extract JSON substring then load
-        payload = json.loads(_extract_json(response_text))
+        proc = subprocess.run(
+            ["grep", "-nEm1", pattern, filepath],
+            capture_output=True,
+            text=True
+        )
 
-    findings = []
+        if not proc.stdout:
+            return None
+
+        return int(proc.stdout.split(":", 1)[0])
+
+    except Exception:
+        return None
+
+
+def grep_snippet(filepath: str, snippet: str):
+
+    if not snippet:
+        return None
+
+    snippet = snippet.strip()
+
+    try:
+        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read()
+
+        idx = text.find(snippet)
+
+        if idx == -1:
+            return None
+
+        return text[:idx].count("\n") + 1
+
+    except Exception:
+        return None
+
+def grep_function_class(filepath: str, function_line: int):
+
+    if not function_line:
+        return None
+
+    try:
+        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+
+        for i in range(function_line - 1, -1, -1):
+
+            line = lines[i].strip()
+
+            m = re.match(r"class\s+([A-Za-z0-9_]+)", line)
+
+            if m:
+                return m.group(1)
+
+            if line.startswith("def "):
+                break
+
+    except Exception:
+        return None
+
+    return None
+
+
+def is_entry_point(filepath: str, function_name: str, function_line: int, code_context: str = "", model: str = "gemini-2.0-flash") -> bool:
+    """
+    Use Gemini model to determine if a function is an entry point.
+    Works for all languages.
+    """
+    if not function_name or not function_line:
+        return False
+
+    try:
+        client = _make_gemini_client()
+    except Exception:
+        return False
+
+    try:
+        if not code_context:
+            try:
+                with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+                    code_context = f.read()
+            except Exception:
+                return False
+
+        prompt = f"""Analyze this code and determine if the function '{function_name}' is an entry point.
+
+Entry points are functions that serve as program execution start points, such as:
+- main() functions
+- Functions called from main blocks (if __name__ == "__main__" in Python)
+- Top-level async/module-level calls
+- CLI command handlers
+- Test runners or bootstrap functions
+
+Return ONLY valid JSON with a single boolean value:
+
+{{
+  "is_entry_point": true or false,
+  "reason": "brief explanation"
+}}
+
+Filename: {os.path.basename(filepath)}
+
+Code:
+{code_context}
+
+Target function: {function_name} (at line {function_line})
+"""
+
+        try:
+            resp = client.models.generate_content(
+                model=model,
+                contents=prompt,
+            )
+            text = getattr(resp, "text", str(resp))
+        except Exception:
+            return False
+
+        try:
+            payload = json.loads(text)
+        except Exception:
+            try:
+                payload = json.loads(_extract_json(text))
+            except Exception:
+                return False
+
+        return payload.get("is_entry_point", False)
+
+    except Exception:
+        return False
+
+# ------------------------------------------------------------
+# Gemini Scan (Per File)
+# ------------------------------------------------------------
+
+def scan_file_with_gemini(filepath: str, model: str = "gemini-2.0-flash") -> List[Dict]:
+
+    client = _make_gemini_client()
+
+    try:
+        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+            code = f.read()
+    except Exception:
+        return []
+
+    prompt = f"""
+You are a security code auditor.
+
+Analyze the file and find security vulnerabilities.
+
+Return ONLY valid JSON.
+
+Schema:
+
+[
+  {{
+    "function": "function name exactly as given do not give info about the class it is in this needs to be exact so it can be found with grep example: my_function(arg1, arg2)",
+    "function_class": "class name if the function is inside a class otherwise None",
+    "snippet": "exact vulnerable code snippet",
+    "issue": "short identifier",
+    "message": "short explanation",
+    "severity": "low|medium|high",
+    "confidence": 0.0-1.0
+  }}
+]
+
+Rules:
+
+- Return the function name containing the vulnerability
+- If not inside a function return "GLOBAL_SCOPE"
+- snippet must be exact code from the file
+- do NOT include line numbers
+- do NOT include markdown
+
+Filename:
+{os.path.basename(filepath)}
+
+Code:
+{code}
+"""
+
+    try:
+
+        resp = client.models.generate_content(
+            model=model,
+            contents=prompt,
+        )
+
+        text = getattr(resp, "text", str(resp))
+
+    except Exception:
+        return []
+
+    try:
+        payload = json.loads(text)
+    except Exception:
+        try:
+            payload = json.loads(_extract_json(text))
+        except Exception:
+            return []
+
     if isinstance(payload, dict):
-        # allow single-object responses
         payload = [payload]
 
+    findings = []
+
     for item in payload:
-        try:
-            start = int(item.get("start", item.get("start_line", item.get("line", 0))))
-        except Exception:
-            start = 0
-        try:
-            end = int(item.get("end", item.get("end_line", start)))
-        except Exception:
-            end = start
+
+        function = item.get("function")
+        snippet = item.get("snippet")
+
+        func_line = grep_function(filepath, function)
+        snippet_line = grep_snippet(filepath, snippet)
+        func_class = item.get("function_class")
+
+        if func_class in ("None", "", "null"):
+            func_class = None
+
+        if not func_class:
+            func_class = grep_function_class(filepath, func_line)
+
+        entry_point = is_entry_point(filepath, function, func_line, code, model)
 
         findings.append(
             {
-                "path": filename,
-                "start": {"line": start + line_offset},
-                "end": {"line": end + line_offset},
-                "issue": item.get("issue") or item.get("type") or item.get("rule") or "possible-vuln",
-                "message": item.get("message") or item.get("explanation") or "",
-                "severity": item.get("severity") or item.get("risk") or "medium",
-                "confidence": float(item.get("confidence", 0.0)) if item.get("confidence") is not None else None,
+                "path": filepath,
+                "function": function,
+                "function_line": func_line,
+                "function_class": func_class,
+                "snippet": snippet,
+                "snippet_line": snippet_line,
+                "issue": item.get("issue"),
+                "message": item.get("message"),
+                "severity": item.get("severity", "medium"),
+                "confidence": item.get("confidence"),
+                "is_entry_point": entry_point,
             }
         )
 
     return findings
 
 
-def scan_file_with_gemini(
-    filepath: str,
-    model: str = "gemini-2.0-flash",
-    max_lines_per_chunk: int = 1000,
-) -> List[Dict]:
-    """Scan a single file with Gemini. Returns a list of findings.
-
-    - Chunks file by lines to keep each request bounded.
-    - Each chunk asks the model to return JSON with findings (line numbers are relative
-      to the chunk start and adjusted when aggregated).
-    """
-    client = _make_gemini_client()
-
-    with open(filepath, "r", encoding="utf-8", errors="replace") as fh:
-        lines = fh.read().splitlines()
-
-    findings: List[Dict] = []
-    total_lines = len(lines)
-
-    for start_idx in range(0, total_lines, max_lines_per_chunk):
-        chunk_lines = lines[start_idx : start_idx + max_lines_per_chunk]
-        chunk_text = "\n".join(chunk_lines)
-
-        prompt = (
-            "You are a security-focused code reviewer. Carefully analyze the provided code snippet and identify potential security vulnerabilities, insecure patterns, or risky usages.\n"
-            "Respond ONLY with valid JSON (no prose, no markdown): an array of objects matching this schema:\n"
-            "  - start: integer (1-indexed line number within the snippet)\n"
-            "  - end: integer (1-indexed line number within the snippet; may equal start)\n"
-            "  - issue: short machine-readable identifier (e.g. \"eval\", \"pickle-load\")\n"
-            "  - message: short human-readable explanation\n"
-            "  - severity: optional, one of \"low\", \"medium\", \"high\"\n"
-            "  - confidence: optional float between 0.0 and 1.0\n"
-            "If there are no findings, return an empty array: []\n"
-            "Do NOT include any text outside the JSON array and do NOT wrap the JSON in code fences.\n\n"
-            f"Filename: {os.path.basename(filepath)}\n"
-            "---\n"
-            "Source:\n``"
-            + chunk_text
-            + "\n```"
-        )
-
-        resp = client.models.generate_content(model=model, contents=prompt)
-        text = getattr(resp, "text", str(resp))
-
-        try:
-            parsed = _parse_response_to_findings(text, filepath, line_offset=start_idx)
-        except Exception:
-            # If parsing fails, skip this chunk but continue scanning others
-            parsed = []
-
-        findings.extend(parsed)
-
-    return findings
-
+# ------------------------------------------------------------
+# Repo Scan
+# ------------------------------------------------------------
 
 def gemini_scan(
     repo_path: str = ".",
@@ -139,104 +319,157 @@ def gemini_scan(
     base_ref: Optional[str] = None,
     head_ref: Optional[str] = None,
 ) -> Dict[str, List[Dict]]:
-    """High-level Gemini scan helper.
 
-    - If `files` provided, scan those files (paths relative to repo_path).
-    - If `base_ref` and `head_ref` supplied, scan files changed between those refs.
-    - If `base_ref` supplied (but no head_ref), fall back to `git diff --name-only base_ref`.
-    - Otherwise scan all .py files under repo_path.
-
-    Returns findings grouped by filename.
-    """
-    # Resolve files list
     targets: List[str] = []
+
     if files:
-        targets = [os.path.join(repo_path, f) if not os.path.isabs(f) else f for f in files]
+
+        targets = [
+            os.path.join(repo_path, f) if not os.path.isabs(f) else f
+            for f in files
+        ]
 
     elif base_ref and head_ref:
-        # Mirror semgrep behavior: use git diff between base_ref..head_ref to get changed files
+
         try:
-            proc = git_cmd(["diff", "--name-only", f"{base_ref}..{head_ref}"], repo_path)
-            changed = [l.strip() for l in (proc.stdout or "").splitlines() if l.strip()]
-            targets = [os.path.join(repo_path, f) if not os.path.isabs(f) else f for f in changed]
+
+            proc = git_cmd(
+                ["diff", "--name-only", f"{base_ref}..{head_ref}"],
+                repo_path,
+            )
+
+            changed = [
+                l.strip()
+                for l in (proc.stdout or "").splitlines()
+                if l.strip()
+            ]
+
+            targets = [
+                os.path.join(repo_path, f) if not os.path.isabs(f) else f
+                for f in changed
+            ]
+
         except Exception:
             targets = []
 
     elif base_ref:
-        # Backward-compatible fallback
+
         try:
+
             changed = get_changed_files(base_ref)
-            targets = [os.path.join(repo_path, f) if not os.path.isabs(f) else f for f in changed]
+
+            targets = [
+                os.path.join(repo_path, f) if not os.path.isabs(f) else f
+                for f in changed
+            ]
+
         except Exception:
             targets = []
 
     if not targets:
-        # Walk repo for .py files
+
         for root, _, filenames in os.walk(repo_path):
+
             for fn in filenames:
-                if fn.endswith(".py"):
+
+                if fn.endswith(
+                    (
+                        ".py",".js",".ts",".java",".go",".rs",".cpp",".c",
+                        ".cs",".php",".rb",".swift",".kt",".scala",".lua",
+                        ".hs",".sh",".dart",".m",".mm",".zig",".nim"
+                    )
+                ):
                     targets.append(os.path.join(root, fn))
 
     grouped: Dict[str, List[Dict]] = defaultdict(list)
 
     for t in targets:
+
         if not os.path.exists(t):
             continue
+
         try:
             file_findings = scan_file_with_gemini(t)
         except Exception:
-            # If external API fails for a file, skip it and continue
             continue
+
         if file_findings:
             grouped[t].extend(file_findings)
 
     return dict(grouped)
 
 
-def print_gemini_findings(findings: Dict[str, List[Dict]]) -> None:
+# ------------------------------------------------------------
+# Pretty Print
+# ------------------------------------------------------------
+
+def print_gemini_findings(findings: Dict[str, List[Dict]]):
+
     if not findings:
         print("Gemini: No findings")
         return
 
     print("\n=== Gemini Security Scan Results ===\n")
+
     for file_idx, (file, file_findings) in enumerate(findings.items(), 1):
-        print(f"File {file_idx} - {file}:")
+
+        print(f"File {file_idx} - {file}")
+
         for vuln_idx, f in enumerate(file_findings, 1):
-            start = f.get("start", {}).get("line")
-            end = f.get("end", {}).get("line")
-            issue = f.get("issue")
-            msg = f.get("message")
-            sev = f.get("severity")
-            conf = f.get("confidence")
+
             print(f"  Vulnerability {vuln_idx}")
-            print(f"    Issue: {issue}")
-            print(f"    Lines: {start}-{end}")
-            print(f"    Message: {msg}")
-            print(f"    Severity: {sev}")
+            print(f"    Function: {f.get('function')}")
+            print(f"    Function Line: {f.get('function_line')}")
+            print(f"    Function Class: {f.get('function_class')}")
+            print(f"    Is Entry Point: {f.get('is_entry_point', False)}")
+            print(f"    Snippet: {f.get('snippet')}")
+            print(f"    Snippet Line: {f.get('snippet_line')}")
+            print(f"    Issue: {f.get('issue')}")
+            print(f"    Message: {f.get('message')}")
+            print(f"    Severity: {f.get('severity')}")
+
+            conf = f.get("confidence")
+
             if conf is not None:
-                print(f"    Confidence: {conf:.2f}")
+                print(f"    Confidence: {conf}")
+
         print()
 
 
+# ------------------------------------------------------------
+# JSON Export
+# ------------------------------------------------------------
+
 def gemini_findings_to_json(findings: Dict[str, List[Dict]]) -> str:
-    """Convert findings to JSON format with numbered vulnerabilities."""
+
     output = []
+
     for file_idx, (file, file_findings) in enumerate(findings.items(), 1):
+
         file_entry = {
             "file_number": file_idx,
             "path": file,
-            "vulnerabilities": []
+            "vulnerabilities": [],
         }
+
         for vuln_idx, f in enumerate(file_findings, 1):
+
             vuln_entry = {
                 "vulnerability_number": vuln_idx,
-                "start_line": f.get("start", {}).get("line"),
-                "end_line": f.get("end", {}).get("line"),
+                "function": f.get("function"),
+                "function_line": f.get("function_line"),
+                "function_class": f.get("function_class"),
+                "is_entry_point": f.get("is_entry_point", False),
+                "snippet": f.get("snippet"),
+                "snippet_line": f.get("snippet_line"),
                 "issue": f.get("issue"),
                 "message": f.get("message"),
                 "severity": f.get("severity"),
-                "confidence": f.get("confidence")
+                "confidence": f.get("confidence"),
             }
+
             file_entry["vulnerabilities"].append(vuln_entry)
+
         output.append(file_entry)
+
     return json.dumps(output, indent=2)

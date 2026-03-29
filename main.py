@@ -37,7 +37,6 @@ def main(repo_path: str = ".", semgrep_config: str = None, base_ref: str = "orig
     # if os.getenv("GEMINI_API_KEY"):
     #     try:
     #         from scanners.flashscan import gemini_scan, print_gemini_findings, gemini_findings_to_json
-
     #         try:
     #             gemini_findings = gemini_scan(repo_path=repo_path, base_ref=effective_base_ref, head_ref=head_ref)
     #             print_gemini_findings(gemini_findings)
