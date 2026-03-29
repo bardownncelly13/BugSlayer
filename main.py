@@ -35,21 +35,27 @@ def main(repo_path: str = ".", semgrep_config: str = None, base_ref: str = "orig
     # over the same repository (changed files when base_ref provided).
     if os.getenv("GEMINI_API_KEY"):
         try:
-            from scanners.flashscan import gemini_scan, print_gemini_findings, gemini_findings_to_json
+            from scanners.flashscan import gemini_scan, gemini_findings_to_json
 
-    #         try:
-    #             gemini_findings = gemini_scan(repo_path=repo_path, base_ref=effective_base_ref, head_ref=head_ref)
-    #             print_gemini_findings(gemini_findings)
-    #             if gemini_findings:
-    #                 print("\n=== Gemini Results (JSON) ===\n")
-    #                 print(gemini_findings_to_json(gemini_findings))
-    #         except Exception as e:
-    #             print(f"Gemini scan failed: {e}")
-    #     except Exception:
-    #         # If flashscan or its optional deps are unavailable, continue silently
-    #         print("Gemini scanner not available (missing dependency or import error)")
-    # else:
-    #     print("no geminai api key")
+            try:
+                gemini_findings = gemini_scan(repo_path=repo_path, base_ref=effective_base_ref, head_ref=head_ref)
+                
+                # Write Gemini results to file
+                gemini_output_file = os.path.join(repo_path, "gemini_results.json")
+                if gemini_findings:
+                    with open(gemini_output_file, "w", encoding="utf-8") as f:
+                        f.write(gemini_findings_to_json(gemini_findings))
+                    print(f"[+] Gemini scan results written to: {gemini_output_file}")
+                else:
+                    print("[-] No Gemini findings")
+                    
+            except Exception as e:
+                print(f"Gemini scan failed: {e}")
+        except Exception:
+            # If flashscan or its optional deps are unavailable, continue silently
+            print("Gemini scanner not available (missing dependency or import error)")
+    else:
+        print("no geminai api key")
 
     # For each finding, run triage and (if real) propose a patch
     for file, file_findings in findings.items():
@@ -122,14 +128,14 @@ def main(repo_path: str = ".", semgrep_config: str = None, base_ref: str = "orig
             #     print(f"[DRY RUN] Would create PR for {file}")
             # else:
             #     print(f"This should not run")
-            create_patch_pr(
-                repo_path=repo_path,
-                finding=finding,
-                file=file,
-                patch=valid_patch,
-                pr_base_branch=pr_base_branch,
-            )
-            shutil.rmtree(temp_repo_path)
+            # create_patch_pr(
+            #     repo_path=repo_path,
+            #     finding=finding,
+            #     file=file,
+            #     patch=valid_patch,
+            #     pr_base_branch=pr_base_branch,
+            # )
+            # shutil.rmtree(temp_repo_path)
     print(f"Finished at {ctime()}")
 
 
