@@ -130,6 +130,74 @@ def grep_function_class(filepath: str, function_line: int):
 
     return None
 
+
+def is_entry_point(filepath: str, function_name: str, function_line: int, code_context: str = "", model: str = "gemini-2.0-flash") -> bool:
+    """
+    Use Gemini model to determine if a function is an entry point.
+    Works for all languages.
+    """
+    if not function_name or not function_line:
+        return False
+
+    try:
+        client = _make_gemini_client()
+    except Exception:
+        return False
+
+    try:
+        if not code_context:
+            try:
+                with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+                    code_context = f.read()
+            except Exception:
+                return False
+
+        prompt = f"""Analyze this code and determine if the function '{function_name}' is an entry point.
+
+Entry points are functions that serve as program execution start points, such as:
+- main() functions
+- Functions called from main blocks (if __name__ == "__main__" in Python)
+- Top-level async/module-level calls
+- CLI command handlers
+- Test runners or bootstrap functions
+
+Return ONLY valid JSON with a single boolean value:
+
+{{
+  "is_entry_point": true or false,
+  "reason": "brief explanation"
+}}
+
+Filename: {os.path.basename(filepath)}
+
+Code:
+{code_context}
+
+Target function: {function_name} (at line {function_line})
+"""
+
+        try:
+            resp = client.models.generate_content(
+                model=model,
+                contents=prompt,
+            )
+            text = getattr(resp, "text", str(resp))
+        except Exception:
+            return False
+
+        try:
+            payload = json.loads(text)
+        except Exception:
+            try:
+                payload = json.loads(_extract_json(text))
+            except Exception:
+                return False
+
+        return payload.get("is_entry_point", False)
+
+    except Exception:
+        return False
+
 # ------------------------------------------------------------
 # Gemini Scan (Per File)
 # ------------------------------------------------------------
@@ -220,6 +288,8 @@ Code:
         if not func_class:
             func_class = grep_function_class(filepath, func_line)
 
+        entry_point = is_entry_point(filepath, function, func_line, code, model)
+
         findings.append(
             {
                 "path": filepath,
@@ -232,6 +302,7 @@ Code:
                 "message": item.get("message"),
                 "severity": item.get("severity", "medium"),
                 "confidence": item.get("confidence"),
+                "is_entry_point": entry_point,
             }
         )
 
@@ -350,6 +421,7 @@ def print_gemini_findings(findings: Dict[str, List[Dict]]):
             print(f"    Function: {f.get('function')}")
             print(f"    Function Line: {f.get('function_line')}")
             print(f"    Function Class: {f.get('function_class')}")
+            print(f"    Is Entry Point: {f.get('is_entry_point', False)}")
             print(f"    Snippet: {f.get('snippet')}")
             print(f"    Snippet Line: {f.get('snippet_line')}")
             print(f"    Issue: {f.get('issue')}")
@@ -387,6 +459,7 @@ def gemini_findings_to_json(findings: Dict[str, List[Dict]]) -> str:
                 "function": f.get("function"),
                 "function_line": f.get("function_line"),
                 "function_class": f.get("function_class"),
+                "is_entry_point": f.get("is_entry_point", False),
                 "snippet": f.get("snippet"),
                 "snippet_line": f.get("snippet_line"),
                 "issue": f.get("issue"),
