@@ -12,7 +12,8 @@ from git_utils.git_ops import (
     resolve_effective_base_ref,
     resolve_pr_base_branch,
 )
-from delta import extract_relevant_diff, normalize_repo_relative
+from delta import normalize_repo_relative
+from codetracing.llm_context import build_code_context_for_finding
 from patch_validation import attempt_patch_loop
 from pathlib import Path
 import os
@@ -63,22 +64,24 @@ def main(repo_path: str = ".", semgrep_config: str = None, base_ref: str = "orig
 
         for finding in file_findings:
             line = finding.get("start", {}).get("line")
-            diff_snippet = (
-                extract_relevant_diff(file_diff, line)
-                if file_diff and line
-                else None
-            )
-
-            # Fallback if extract_relevant_diff or diff_diff_for_file fails
-            # Pulls the exact line which the LLM flagged
+            diff_snippet = None
+            if line:
+                diff_snippet = build_code_context_for_finding(
+                    repo_path,
+                    file,
+                    finding,
+                    file_diff,
+                    line,
+                )
+                if not (diff_snippet and diff_snippet.strip()):
+                    diff_snippet = None
             if not diff_snippet and line:
                 repo_abs = Path(repo_path)
-                # file is repo-relative from semgrep; resolve against repo root
                 full_path = (repo_abs / file).resolve()
                 if full_path.exists():
                     with open(full_path, "r", encoding="utf-8") as f:
-                        lines = f.readlines()
-                        diff_snippet = lines[line - 1].rstrip("\n")
+                        flines = f.readlines()
+                        diff_snippet = flines[line - 1].rstrip("\n")
 
             context = {
                 "file": file,
@@ -115,13 +118,13 @@ def main(repo_path: str = ".", semgrep_config: str = None, base_ref: str = "orig
 
             if not valid_patch:
                 print(f"No valid patch generated for {file}")
-                # create_failure_pr(
-                #     repo_path=repo_path,
-                #     finding=finding,
-                #     file=file,
-                #     pr_base_branch=pr_base_branch,
-                #     max_attempts=MAX_PATCH_ATTEMPTS,
-                # )
+                create_failure_pr(
+                    repo_path=repo_path,
+                    finding=finding,
+                    file=file,
+                    pr_base_branch=pr_base_branch,
+                    max_attempts=MAX_PATCH_ATTEMPTS,
+                )
                 shutil.rmtree(temp_repo_path)
                 continue
 
@@ -129,14 +132,14 @@ def main(repo_path: str = ".", semgrep_config: str = None, base_ref: str = "orig
             #     print(f"[DRY RUN] Would create PR for {file}")
             # else:
             #     print(f"This should not run")
-            # create_patch_pr(
-            #     repo_path=repo_path,
-            #     finding=finding,
-            #     file=file,
-            #     patch=valid_patch,
-            #     pr_base_branch=pr_base_branch,
-            # )
-            # shutil.rmtree(temp_repo_path)
+            create_patch_pr(
+                repo_path=repo_path,
+                finding=finding,
+                file=file,
+                patch=valid_patch,
+                pr_base_branch=pr_base_branch,
+            )
+            shutil.rmtree(temp_repo_path)
     print(f"Finished at {ctime()}")
 
     # Exit with code 1 if any findings were detected fo CI integration

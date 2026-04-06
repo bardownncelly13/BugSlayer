@@ -2,6 +2,7 @@ import os
 import ctypes
 import sys
 import json
+from typing import Any, Dict, List, Optional
 from tree_sitter import Parser, Language
 
 LIB_PATH = os.path.join(os.path.dirname(__file__), "parsers", "build", "my-languages.so")
@@ -26,9 +27,8 @@ FUNCTION_NODE_TYPES = {
 
 # Keep CDLLs alive
 _LIBS = {}
-
 # Initialize parsers
-PARSERS = {}
+PARSERS: Dict[str, Parser] = {}
 
 
 def load_language(lib_path: str, name: str) -> Language:
@@ -46,97 +46,173 @@ def load_language(lib_path: str, name: str) -> Language:
 def _init_parsers():
     """Initialize parsers for all languages."""
     global PARSERS
-    if not PARSERS:
-        try:
-            LANGS = {name: load_language(LIB_PATH, name) for name in set(LANG_MAP.values())}
-            for name, lang in LANGS.items():
-                p = Parser()
-                p.language = lang
-                PARSERS[name] = p
-        except Exception as e:
-            print(f"Error initializing parsers: {e}")
+    if PARSERS:
+        return
+    try:
+        if not os.path.isfile(LIB_PATH):
+            return
+        langs = {name: load_language(LIB_PATH, name) for name in set(LANG_MAP.values())}
+        for name, lang in langs.items():
+            p = Parser()
+            p.language = lang
+            PARSERS[name] = p
+    except Exception as e:
+        print(f"Error initializing parsers: {e}", file=sys.stderr)
+        PARSERS = {}
 
 
 def node_text(node, source: bytes) -> str:
     return source[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
 
 
-def get_function_by_name(filepath: str, function_name: str) -> dict:
+def _function_dict_from_node(
+    node, source: bytes, filepath: str, node_name: str
+) -> Dict[str, Any]:
+    start_line = node.start_point[0] + 1
+    end_line = node.end_point[0] + 1
+    return {
+        "path": filepath,
+        "name": node_name,
+        "start_line": start_line,
+        "end_line": end_line,
+        "body": node_text(node, source),
+        "fn_key": f"{filepath}::{node_name}::{start_line}",
+    }
+
+
+def collect_functions_named(filepath: str, function_name: str) -> List[Dict[str, Any]]:
     """
-    Extract a single function from a file by name using tree-sitter.
-    Returns dict with path, name, start_line, end_line, body, and fn_key.
+    All tree-sitter function-like nodes whose declared name matches function_name.
+
+    C/C++ can define several `void foo(int)` / `void foo(char*)` — same name,
+    different nodes; use get_function_by_name(..., target_line=...) to pick one.
     """
     _init_parsers()
-    
     ext = os.path.splitext(filepath)[1].lower()
     lang_name = LANG_MAP.get(ext)
     if not lang_name:
-        return None
-    
+        return []
     parser = PARSERS.get(lang_name)
     if not parser:
-        return None
-    
+        return []
+
     try:
         with open(filepath, "rb") as f:
             source = f.read()
-    except Exception:
-        return None
-    
+    except OSError:
+        return []
+
     tree = parser.parse(source)
-    root = tree.root_node
-    stack = [(root, None)]
-    
     fn_types = FUNCTION_NODE_TYPES.get(lang_name, ("function_definition",))
-    
+    out: List[Dict[str, Any]] = []
+
+    stack = [tree.root_node]
     while stack:
-        node, _ = stack.pop()
-        
+        node = stack.pop()
         if node.type in fn_types:
             name_node = node.child_by_field_name("name")
             if name_node:
                 node_name = node_text(name_node, source)
                 if node_name == function_name:
-                    start_line = node.start_point[0] + 1
-                    
-                    # Extract parameters
-                    param_node = (
-                        node.child_by_field_name("parameters")
-                        or node.child_by_field_name("parameter_list")
-                    )
-                    parameters = node_text(param_node, source) if param_node else ""
-                    
-                    fn_key = f"{filepath}::{node_name}{parameters}::{start_line}"
-                    return {
-                        "path": filepath,
-                        "name": node_name,
-                        "start_line": start_line,
-                        "end_line": node.end_point[0] + 1,
-                        "body": node_text(node, source),
-                        "parameters": parameters,
-                        "fn_key": fn_key
-                    }
-        
-        for child in node.children:
-            stack.append((child, None))
-    
+                    out.append(_function_dict_from_node(node, source, filepath, node_name))
+        for child in reversed(node.children):
+            stack.append(child)
+
+    out.sort(key=lambda d: (d["start_line"], d["end_line"]))
+    return out
+
+
+def get_function_by_name(
+    filepath: str,
+    function_name: str,
+    target_line: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    Extract one function by name. If several overloads exist (e.g. C), pass
+    target_line (1-based) so the match whose body contains that line wins;
+    if multiple nested matches, the innermost (smallest line span) wins.
+    """
+    matches = collect_functions_named(filepath, function_name)
+    if not matches:
+        return None
+
+    if target_line is not None:
+        containing = [
+            m
+            for m in matches
+            if m["start_line"] <= target_line <= m["end_line"]
+        ]
+        if len(containing) == 1:
+            return containing[0]
+        if len(containing) > 1:
+            containing.sort(
+                key=lambda m: (m["end_line"] - m["start_line"], -m["start_line"])
+            )
+            return containing[0]
+
+    if len(matches) == 1:
+        return matches[0]
+
     return None
+
+
+def get_enclosing_function_at_line(filepath: str, line_1based: int) -> Optional[Dict[str, Any]]:
+    """Innermost function-like node containing line_1based (no name required)."""
+    _init_parsers()
+    if line_1based is None or line_1based < 1:
+        return None
+    ext = os.path.splitext(filepath)[1].lower()
+    lang_name = LANG_MAP.get(ext)
+    if not lang_name:
+        return None
+    parser = PARSERS.get(lang_name)
+    if not parser:
+        return None
+
+    try:
+        with open(filepath, "rb") as f:
+            source = f.read()
+    except OSError:
+        return None
+
+    tree = parser.parse(source)
+    fn_types = FUNCTION_NODE_TYPES.get(lang_name, ("function_definition",))
+    candidates: List[tuple] = []
+
+    def visit(node):
+        if node.type in fn_types:
+            sl = node.start_point[0] + 1
+            el = node.end_point[0] + 1
+            if sl <= line_1based <= el:
+                name_node = node.child_by_field_name("name")
+                node_name = (
+                    node_text(name_node, source) if name_node else "<anonymous>"
+                )
+                span = el - sl
+                candidates.append((span, node, node_name, sl, el))
+        for c in node.children:
+            visit(c)
+
+    visit(tree.root_node)
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: x[0])
+    _, node, node_name, sl, el = candidates[0]
+    return _function_dict_from_node(node, source, filepath, node_name)
 
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
-        print("Usage: python get_func_by_name.py <filepath> <function_name>")
-        print("\nExample:")
-        print("  python get_func_by_name.py ../main.py main")
-        print("  python get_func_by_name.py scanners/flashscan.py gemini_scan")
+        print("Usage: python get_func_by_name.py <filepath> <function_name> [line]")
         sys.exit(1)
-    
+
     filepath = sys.argv[1]
     function_name = sys.argv[2]
-    
-    result = get_function_by_name(filepath, function_name)
+    line = int(sys.argv[3]) if len(sys.argv) > 3 else None
+
+    result = get_function_by_name(filepath, function_name, target_line=line)
     if result:
         print(json.dumps(result, indent=2))
     else:
-        print(f"Function '{function_name}' not found in {filepath}")
+        print(f"Function '{function_name}' not found (or ambiguous) in {filepath}")
         sys.exit(1)

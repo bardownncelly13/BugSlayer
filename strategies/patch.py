@@ -1,6 +1,7 @@
 import json
 from llm.client import LLMClient
 from strategies.base import Strategy, PatchResult
+from strategies.llm_debug import print_llm_context_if_enabled
 
 class PatchStrategy(Strategy):
     def __init__(self):
@@ -60,9 +61,15 @@ Security finding:
 Rule ID: {finding.get("check_id")}
 Message: {finding.get("extra", {}).get("message")}
 
-Relevant diff context (may be partial):
+Relevant code context (tree-sitter function scope, diff hunk, and/or line — may be partial):
 {diff}
 """
+
+        print_llm_context_if_enabled(
+            f"PatchStrategy file={file}",
+            sys,
+            prompt,
+        )
 
         raw = self.llm.run(sys, prompt)
 
