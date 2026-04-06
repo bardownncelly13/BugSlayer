@@ -109,7 +109,15 @@ def iter_calls(tree, source: bytes, rel_path: str, lang: str):
             if name_node:
                 caller_name = node_text(name_node, source)
                 caller_start_line = node.start_point[0] + 1
-                caller_key = f"{rel_path}::{caller_name}::{caller_start_line}"
+                
+                # Extract parameters to include in the caller_key
+                param_node = (
+                    node.child_by_field_name("parameters")
+                    or node.child_by_field_name("parameter_list")
+                )
+                parameters = node_text(param_node, source) if param_node else ""
+                
+                caller_key = f"{rel_path}::{caller_name}{parameters}::{caller_start_line}"
                 current_fn = {
                     "caller_path": rel_path,
                     "caller_name": caller_name,

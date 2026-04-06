@@ -98,13 +98,23 @@ def get_function_by_name(filepath: str, function_name: str) -> dict:
                 node_name = node_text(name_node, source)
                 if node_name == function_name:
                     start_line = node.start_point[0] + 1
+                    
+                    # Extract parameters
+                    param_node = (
+                        node.child_by_field_name("parameters")
+                        or node.child_by_field_name("parameter_list")
+                    )
+                    parameters = node_text(param_node, source) if param_node else ""
+                    
+                    fn_key = f"{filepath}::{node_name}{parameters}::{start_line}"
                     return {
                         "path": filepath,
                         "name": node_name,
                         "start_line": start_line,
                         "end_line": node.end_point[0] + 1,
                         "body": node_text(node, source),
-                        "fn_key": f"{filepath}::{node_name}::{start_line}"
+                        "parameters": parameters,
+                        "fn_key": fn_key
                     }
         
         for child in node.children:

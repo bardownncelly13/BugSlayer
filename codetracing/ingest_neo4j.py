@@ -18,6 +18,8 @@ def ensure_schema(tx):
     tx.run("CREATE CONSTRAINT file_path IF NOT EXISTS FOR (f:File) REQUIRE f.path IS UNIQUE")
     tx.run("CREATE CONSTRAINT function_key IF NOT EXISTS FOR (fn:Function) REQUIRE fn.key IS UNIQUE")
     tx.run("CREATE INDEX function_name IF NOT EXISTS FOR (fn:Function) ON (fn.name)")
+    tx.run("CREATE INDEX function_entrypoint IF NOT EXISTS FOR (fn:Function) ON (fn.entrypoint)")
+    tx.run("CREATE INDEX function_vulnerablefunc IF NOT EXISTS FOR (fn:Function) ON (fn.vulnerablefunc)")
     tx.run("CREATE INDEX file_path_idx IF NOT EXISTS FOR (f:File) ON (f.path)")
 
 
@@ -25,8 +27,10 @@ def upsert_record(tx, repo_name, repo_root, rec):
     path = rec.get("path")
     name = rec.get("function")
     start_line = rec.get("start_line")
+    parameters = rec.get("parameters") or ""
 
-    fn_key = f"{path}::{name}::{start_line}"
+    # Include parameters in the function key for more unique identification
+    fn_key = f"{path}::{name}{parameters}::{start_line}"
 
     params = {
         "repo_name": repo_name,
@@ -40,6 +44,8 @@ def upsert_record(tx, repo_name, repo_root, rec):
         "end_line": rec.get("end_line"),
         "body": rec.get("body") or "",
         "container": rec.get("class"),
+        "entrypoint": bool(rec.get("entrypoint", False)),
+        "vulnerablefunc": bool(rec.get("vulnerablefunc", False)),
     }
 
     tx.run(
@@ -58,7 +64,9 @@ def upsert_record(tx, repo_name, repo_root, rec):
             fn.end_line = $end_line,
             fn.body = $body,
             fn.path = $path,
-            fn.container = $container
+            fn.container = $container,
+            fn.entrypoint = $entrypoint,
+            fn.vulnerablefunc = $vulnerablefunc
 
         MERGE (f)-[:DEFINES]->(fn)
         """,
