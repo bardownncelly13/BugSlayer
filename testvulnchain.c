@@ -29,7 +29,7 @@ static void vulnerable_copy(const char *s) {
 }
 
 int main(int argc, char **argv) {
-    const char *user = (argc > 1) ? argv[1] : "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-    step1(user);
+    if (argc < 2) return 1;
+    step1(argv[1]);     
     return 0;
 }
