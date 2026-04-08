@@ -69,7 +69,7 @@ BATCH_SIZE = int(os.environ.get("LLM_MATCH_BATCHSIZE", "20"))
 MAX_CANDIDATES = int(os.environ.get("LLM_MATCH_MAX_CANDIDATES", "20"))
 
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
-SLEEP_BETWEEN = float(os.environ.get("GEMINI_SLEEP_BETWEEN", "60"))
+SLEEP_BETWEEN = float(os.environ.get("GEMINI_SLEEP_BETWEEN", "0"))
 
 BUILTINS = {
     "print","len","range","tuple","list","dict","set","str","int","float","bool",

@@ -27,6 +27,7 @@ FUNCTION_NODE_TYPES = {
 
 # Keep CDLLs alive
 _LIBS = {}
+
 # Initialize parsers
 PARSERS: Dict[str, Parser] = {}
 
@@ -36,7 +37,6 @@ def load_language(lib_path: str, name: str) -> Language:
     if lib is None:
         lib = ctypes.CDLL(lib_path)
         _LIBS[lib_path] = lib
-
     fn = getattr(lib, f"tree_sitter_{name}")
     fn.restype = ctypes.c_void_p
     ptr = fn()
@@ -62,30 +62,44 @@ def _init_parsers():
 
 
 def node_text(node, source: bytes) -> str:
-    return source[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
+    return source[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
+
+
+def find_first_identifier(node):
+    """Walk a subtree and return the first `identifier` node (used for C/C++ declarators)."""
+    if node is None:
+        return None
+    stack = [node]
+    while stack:
+        n = stack.pop()
+        if n.type == "identifier":
+            return n
+        stack.extend(reversed(n.children))
+    return None
 
 
 def _function_dict_from_node(
-    node, source: bytes, filepath: str, node_name: str
+    node, source: bytes, filepath: str, node_name: str, parameters: str = ""
 ) -> Dict[str, Any]:
     start_line = node.start_point[0] + 1
     end_line = node.end_point[0] + 1
     return {
         "path": filepath,
         "name": node_name,
+        "parameters": parameters or "",
         "start_line": start_line,
         "end_line": end_line,
         "body": node_text(node, source),
-        "fn_key": f"{filepath}::{node_name}::{start_line}",
+        # NOTE: keep fn_key format consistent with your Neo4j ingest:
+        # path::name{parameters}::start_line
+        "fn_key": f"{filepath}::{node_name}{parameters or ''}::{start_line}",
     }
 
 
 def collect_functions_named(filepath: str, function_name: str) -> List[Dict[str, Any]]:
     """
     All tree-sitter function-like nodes whose declared name matches function_name.
-
-    C/C++ can define several `void foo(int)` / `void foo(char*)` — same name,
-    different nodes; use get_function_by_name(..., target_line=...) to pick one.
+    For C/C++ the function name is often nested under the declarator, so we use a fallback.
     """
     _init_parsers()
     ext = os.path.splitext(filepath)[1].lower()
@@ -104,17 +118,35 @@ def collect_functions_named(filepath: str, function_name: str) -> List[Dict[str,
 
     tree = parser.parse(source)
     fn_types = FUNCTION_NODE_TYPES.get(lang_name, ("function_definition",))
-    out: List[Dict[str, Any]] = []
 
+    out: List[Dict[str, Any]] = []
     stack = [tree.root_node]
+
     while stack:
         node = stack.pop()
+
         if node.type in fn_types:
             name_node = node.child_by_field_name("name")
+
+            # C/C++: name often not directly available; pull from declarator
+            if name_node is None and lang_name in ("c", "cpp"):
+                decl = node.child_by_field_name("declarator")
+                if decl:
+                    name_node = find_first_identifier(decl)
+
             if name_node:
                 node_name = node_text(name_node, source)
+
                 if node_name == function_name:
-                    out.append(_function_dict_from_node(node, source, filepath, node_name))
+                    param_node = (
+                        node.child_by_field_name("parameters")
+                        or node.child_by_field_name("parameter_list")
+                    )
+                    parameters = node_text(param_node, source) if param_node else ""
+                    out.append(
+                        _function_dict_from_node(node, source, filepath, node_name, parameters)
+                    )
+
         for child in reversed(node.children):
             stack.append(child)
 
@@ -128,31 +160,26 @@ def get_function_by_name(
     target_line: Optional[int] = None,
 ) -> Optional[Dict[str, Any]]:
     """
-    Extract one function by name. If several overloads exist (e.g. C), pass
-    target_line (1-based) so the match whose body contains that line wins;
-    if multiple nested matches, the innermost (smallest line span) wins.
+    Extract one function by name. If several matches exist, pass target_line (1-based)
+    so the match whose body contains that line wins; if multiple nested matches,
+    the innermost (smallest line span) wins.
     """
     matches = collect_functions_named(filepath, function_name)
     if not matches:
         return None
 
     if target_line is not None:
-        containing = [
-            m
-            for m in matches
-            if m["start_line"] <= target_line <= m["end_line"]
-        ]
+        containing = [m for m in matches if m["start_line"] <= target_line <= m["end_line"]]
         if len(containing) == 1:
             return containing[0]
         if len(containing) > 1:
-            containing.sort(
-                key=lambda m: (m["end_line"] - m["start_line"], -m["start_line"])
-            )
+            containing.sort(key=lambda m: (m["end_line"] - m["start_line"], -m["start_line"]))
             return containing[0]
 
     if len(matches) == 1:
         return matches[0]
 
+    # ambiguous without target_line
     return None
 
 
@@ -161,10 +188,12 @@ def get_enclosing_function_at_line(filepath: str, line_1based: int) -> Optional[
     _init_parsers()
     if line_1based is None or line_1based < 1:
         return None
+
     ext = os.path.splitext(filepath)[1].lower()
     lang_name = LANG_MAP.get(ext)
     if not lang_name:
         return None
+
     parser = PARSERS.get(lang_name)
     if not parser:
         return None
@@ -185,20 +214,34 @@ def get_enclosing_function_at_line(filepath: str, line_1based: int) -> Optional[
             el = node.end_point[0] + 1
             if sl <= line_1based <= el:
                 name_node = node.child_by_field_name("name")
-                node_name = (
-                    node_text(name_node, source) if name_node else "<anonymous>"
+
+                if name_node is None and lang_name in ("c", "cpp"):
+                    decl = node.child_by_field_name("declarator")
+                    if decl:
+                        name_node = find_first_identifier(decl)
+
+                node_name = node_text(name_node, source) if name_node else "<anonymous>"
+
+                param_node = (
+                    node.child_by_field_name("parameters")
+                    or node.child_by_field_name("parameter_list")
                 )
+                parameters = node_text(param_node, source) if param_node else ""
+
                 span = el - sl
-                candidates.append((span, node, node_name, sl, el))
+                candidates.append((span, node, node_name, parameters, sl, el))
+
         for c in node.children:
             visit(c)
 
     visit(tree.root_node)
+
     if not candidates:
         return None
+
     candidates.sort(key=lambda x: x[0])
-    _, node, node_name, sl, el = candidates[0]
-    return _function_dict_from_node(node, source, filepath, node_name)
+    _, node, node_name, parameters, sl, el = candidates[0]
+    return _function_dict_from_node(node, source, filepath, node_name, parameters)
 
 
 if __name__ == "__main__":

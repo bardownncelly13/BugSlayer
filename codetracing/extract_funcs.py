@@ -8,7 +8,6 @@ import argparse
 import tempfile
 import shutil
 import subprocess
-
 from tree_sitter import Parser, Language
 
 warnings.filterwarnings(
@@ -30,9 +29,16 @@ LANG_MAP = {
 }
 
 SKIP_DIRS = {
-    ".git", ".hg", ".svn",
-    "node_modules", "target", "dist", "build",
-    ".venv", "venv", "__pycache__",
+    ".git",
+    ".hg",
+    ".svn",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    ".venv",
+    "venv",
+    "__pycache__",
 }
 
 MAX_BYTES = 2_000_000
@@ -42,7 +48,12 @@ FUNCTION_NODE_TYPES = {
     "c": ("function_definition",),
     "cpp": ("function_definition",),
     "rust": ("function_item",),
-    "javascript": ("function_declaration", "method_definition", "function", "arrow_function"),
+    "javascript": (
+        "function_declaration",
+        "method_definition",
+        "function",
+        "arrow_function",
+    ),
 }
 
 # Keep CDLLs alive
@@ -67,7 +78,6 @@ def load_language(lib_path: str, name: str) -> Language:
     if lib is None:
         lib = ctypes.CDLL(lib_path)
         _LIBS[lib_path] = lib
-
     fn = getattr(lib, f"tree_sitter_{name}")
     fn.restype = ctypes.c_void_p
     ptr = fn()
@@ -84,7 +94,21 @@ for name, lang in LANGS.items():
 
 
 def node_text(node, source: bytes) -> str:
-    return source[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
+    return source[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
+
+
+def find_first_identifier(node):
+    """Walk a subtree and return the first `identifier` node (used for C/C++ declarators)."""
+    if node is None:
+        return None
+    stack = [node]
+    while stack:
+        n = stack.pop()
+        if n.type == "identifier":
+            return n
+        # DFS
+        stack.extend(reversed(n.children))
+    return None
 
 
 def extract_functions(tree, source: bytes, rel_path: str, lang_name: str):
@@ -114,12 +138,20 @@ def extract_functions(tree, source: bytes, rel_path: str, lang_name: str):
 
         if node.type in fn_types:
             name_node = node.child_by_field_name("name")
+
+            # tree-sitter-c / tree-sitter-cpp often nest the name under the declarator
+            if not name_node and lang_name in ("c", "cpp"):
+                decl = node.child_by_field_name("declarator")
+                if decl:
+                    name_node = find_first_identifier(decl)
+
             param_node = (
                 node.child_by_field_name("parameters")
                 or node.child_by_field_name("parameter_list")
             )
 
             if name_node:
+                body = node_text(node, source)
                 functions.append(
                     {
                         "path": rel_path,  # RELATIVE PATH
@@ -129,7 +161,7 @@ def extract_functions(tree, source: bytes, rel_path: str, lang_name: str):
                         "parameters": node_text(param_node, source) if param_node else "",
                         "start_line": node.start_point[0] + 1,
                         "end_line": node.end_point[0] + 1,
-                        "body": node_text(node, source),
+                        "body": body,
                     }
                 )
 
@@ -184,6 +216,7 @@ def is_git_url(s: str) -> bool:
 def clone_to_temp(git_url_or_path: str) -> str:
     try:
         from git_utils.git_ops import create_temp_repo
+
         return create_temp_repo(git_url_or_path)
     except Exception:
         temp_dir = tempfile.mkdtemp(prefix="codetrace_repo_")
@@ -193,18 +226,25 @@ def clone_to_temp(git_url_or_path: str) -> str:
 
 def run_extract_funcs(repo_root: str, out_file: str):
     data, stats = parse_repo(repo_root)
-
     with open(out_file, "w", encoding="utf-8") as out_f:
         for rec in data:
             print(json.dumps(rec, ensure_ascii=False), file=out_f)
-
-    print(json.dumps({"_stats": stats, "repo_root": repo_root}, ensure_ascii=False), file=sys.stderr)
+    print(
+        json.dumps({"_stats": stats, "repo_root": repo_root}, ensure_ascii=False),
+        file=sys.stderr,
+    )
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--repo", default=".", help="Local repo path to scan (default: git root if inside a repo)")
-    ap.add_argument("--git", default=None, help="Git URL/path to clone+scan (overrides --repo)")
+    ap.add_argument(
+        "--repo",
+        default=".",
+        help="Local repo path to scan (default: git root if inside a repo)",
+    )
+    ap.add_argument(
+        "--git", default=None, help="Git URL/path to clone+scan (overrides --repo)"
+    )
     ap.add_argument("--out", default="-", help="Output JSONL file (default: stdout)")
     args = ap.parse_args()
 
@@ -219,20 +259,24 @@ def main():
             repo_root = os.path.abspath(args.git)
     else:
         # If --repo is '.', scan git root (not just current subdir)
-        repo_root = get_git_root(args.repo) if args.repo == "." else os.path.abspath(args.repo)
+        repo_root = (
+            get_git_root(args.repo) if args.repo == "." else os.path.abspath(args.repo)
+        )
 
     if args.out == "-":
-        out_f = sys.stdout
-        try:
-            data, stats = parse_repo(repo_root)
+        data, stats = parse_repo(repo_root)
+        for rec in data:
+            print(json.dumps(rec, ensure_ascii=False))
+    else:
+        data, stats = parse_repo(repo_root)
+        with open(args.out, "w", encoding="utf-8") as out_f:
             for rec in data:
                 print(json.dumps(rec, ensure_ascii=False), file=out_f)
-        finally:
-            pass
-    else:
-        run_extract_funcs(repo_root, args.out)
 
-    print(json.dumps({"_stats": stats, "repo_root": repo_root}, ensure_ascii=False), file=sys.stderr)
+    print(
+        json.dumps({"_stats": stats, "repo_root": repo_root}, ensure_ascii=False),
+        file=sys.stderr,
+    )
 
     if temp_dir:
         shutil.rmtree(temp_dir, ignore_errors=True)

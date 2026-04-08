@@ -21,6 +21,17 @@ try:
 except ImportError:
     pass
 
+from llm.gemini_client import gemini_text
+
+# Tree-sitter imports for function extraction (optional)
+TREE_SITTER_AVAILABLE = False
+try:
+    from tree_sitter import Parser, Language
+    import ctypes
+    TREE_SITTER_AVAILABLE = True
+except ImportError:
+    pass
+
 # Tree-sitter setup for function extraction
 if TREE_SITTER_AVAILABLE:
     LIB_PATH = os.path.join(os.path.dirname(__file__), "..", "codetracing", "parsers", "build", "my-languages.so")
@@ -89,50 +100,49 @@ if TREE_SITTER_AVAILABLE:
             root = tree.root_node
             stack = [(root, None)]
             functions = []
-
             fn_types = FUNCTION_NODE_TYPES.get(lang_name, ("function_definition",))
 
             while stack:
                 node, parent_class = stack.pop()
 
-                if node.type in fn_types:
-                    # Extract function name
-                    func_name = None
-                    start_line = node.start_point[0] + 1
-
-                    # Find the function name identifier
-                    for child in node.children:
-                        if child.type == "identifier" or child.type == "name":
-                            func_name = node_text(child, source)
-                            break
-                        elif lang_name == "python" and child.type == "function":
-                            # Python nested structure
-                            for subchild in child.children:
-                                if subchild.type == "identifier":
-                                    func_name = node_text(subchild, source)
-                                    break
-
-                    if func_name:
-                        functions.append({
-                            "name": func_name,
-                            "line": start_line,
-                            "class": parent_class
-                        })
-
-                # Check for class context
+                # class context (python/cpp)
                 current_class = parent_class
-                if node.type in ("class_definition", "class"):
-                    for child in node.children:
-                        if child.type == "identifier" or child.type == "name":
-                            current_class = node_text(child, source)
-                            break
+                if node.type in ("class_definition", "class_specifier"):
+                    name_node = node.child_by_field_name("name")
+                    if name_node:
+                        current_class = node_text(name_node, source)
 
-                # Add children to stack
+                if node.type in fn_types:
+                    name_node = node.child_by_field_name("name")
+
+                    # C/C++: name often nested under declarator
+                    if name_node is None and lang_name in ("c", "cpp"):
+                        decl = node.child_by_field_name("declarator")
+                        name_node = _find_first_identifier(decl) if decl else None
+
+                    if name_node:
+                        func_name = node_text(name_node, source)
+                        start_line = node.start_point[0] + 1
+
+                        param_node = (
+                            node.child_by_field_name("parameters")
+                            or node.child_by_field_name("parameter_list")
+                        )
+                        parameters = node_text(param_node, source) if param_node else ""
+
+                        functions.append(
+                            {
+                                "name": func_name,
+                                "line": start_line,
+                                "parameters": parameters,
+                                "class": current_class,
+                            }
+                        )
+
                 for child in reversed(node.children):
                     stack.append((child, current_class))
 
             return functions
-
         except Exception:
             return []
 
@@ -159,19 +169,7 @@ if TREE_SITTER_AVAILABLE and not PARSERS:
 
 
 # ------------------------------------------------------------
-# Gemini Client
 # ------------------------------------------------------------
-
-def _make_gemini_client() -> "genai.Client":
-    api_key = os.getenv("GEMINI_API_KEY")
-
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY not configured")
-
-    if genai is None:
-        raise RuntimeError("google.genai package not installed")
-
-    return genai.Client(api_key=api_key)
 
 
 # ------------------------------------------------------------
@@ -225,26 +223,25 @@ def _extract_json_object(text: str) -> str:
 # ------------------------------------------------------------
 
 def grep_function(filepath: str, function_name: str):
-
     if not function_name or function_name == "GLOBAL_SCOPE":
         return None
 
-    name = function_name.split("(")[0]
+    name = function_name.split("(")[0].strip()
+    if not name:
+        return None
 
-    pattern = rf"(def|function|func)\s+{name}\b|{name}\s*\("
+    # Match common styles across languages, including C/C++
+    pattern = rf"(^\s*(def|function|func)\s+{re.escape(name)}\b)|(^\s*.*\b{re.escape(name)}\s*\()"
 
     try:
         proc = subprocess.run(
             ["grep", "-nEm1", pattern, filepath],
             capture_output=True,
-            text=True
+            text=True,
         )
-
         if not proc.stdout:
             return None
-
         return int(proc.stdout.split(":", 1)[0])
-
     except Exception:
         return None
 
@@ -296,18 +293,22 @@ def grep_function_class(filepath: str, function_line: int):
 
     return None
 
-
+def _find_first_identifier(node):
+    if node is None:
+        return None
+    stack = [node]
+    while stack:
+        n = stack.pop()
+        if n.type == "identifier":
+            return n
+        stack.extend(reversed(n.children))
+    return None
 def is_entry_point(filepath: str, function_name: str, function_line: int, code_context: str = "", model: str = "gemini-2.0-flash") -> bool:
     """
     Use Gemini model to determine if a function is an entry point.
     Works for all languages.
     """
     if not function_name or not function_line:
-        return False
-
-    try:
-        client = _make_gemini_client()
-    except Exception:
         return False
 
     try:
@@ -345,11 +346,7 @@ Target function: {function_name} (at line {function_line})
 """
 
         try:
-            resp = client.models.generate_content(
-                model=model,
-                contents=prompt,
-            )
-            text = getattr(resp, "text", str(resp))
+            text = gemini_text("", prompt, model=model)
             print(f"DEBUG: Gemini response for {function_name}: {text[:200]}...")
         except Exception as e:
             print(f"DEBUG: Gemini API error for {function_name}: {e}")
@@ -412,8 +409,6 @@ def scan_file_for_entry_points(filepath: str, model: str = "gemini-2.0-flash") -
 
 def scan_file_with_gemini(filepath: str, model: str = "gemini-2.0-flash") -> List[Dict]:
 
-    client = _make_gemini_client()
-
     try:
         with open(filepath, "r", encoding="utf-8", errors="replace") as f:
             code = f.read()
@@ -458,12 +453,7 @@ Code:
 
     try:
 
-        resp = client.models.generate_content(
-            model=model,
-            contents=prompt,
-        )
-
-        text = getattr(resp, "text", str(resp))
+        text = gemini_text("", prompt, model=model)
 
     except Exception:
         return []
@@ -526,7 +516,45 @@ def gemini_scan(
     files: Optional[List[str]] = None,
     base_ref: Optional[str] = None,
     head_ref: Optional[str] = None,
+    output_path: Optional[str] = None,
 ) -> Dict[str, List[Dict]]:
+
+    def _is_scannable_file(name: str) -> bool:
+        if not name:
+            return False
+        if name.endswith(".jsonl"):
+            return False
+        return name.endswith(
+            (
+                ".py",
+                ".js",
+                ".ts",
+                ".java",
+                ".go",
+                ".rs",
+                ".cpp",
+                ".c",
+                ".cs",
+                ".php",
+                ".rb",
+                ".swift",
+                ".kt",
+                ".scala",
+                ".lua",
+                ".hs",
+                ".sh",
+                ".dart",
+                ".m",
+                ".mm",
+                ".zig",
+                ".nim",
+            )
+        )
+
+    def _normalize_target(path: str) -> tuple[str, str]:
+        abs_target = path if os.path.isabs(path) else os.path.abspath(os.path.join(repo_path, path))
+        rel_target = os.path.relpath(abs_target, repo_path)
+        return abs_target, rel_target
 
     targets: List[str] = []
 
@@ -535,6 +563,7 @@ def gemini_scan(
         targets = [
             os.path.join(repo_path, f) if not os.path.isabs(f) else f
             for f in files
+            if _is_scannable_file(f)
         ]
 
     elif base_ref and head_ref:
@@ -555,6 +584,7 @@ def gemini_scan(
             targets = [
                 os.path.join(repo_path, f) if not os.path.isabs(f) else f
                 for f in changed
+                if _is_scannable_file(f)
             ]
 
         except Exception:
@@ -569,6 +599,7 @@ def gemini_scan(
             targets = [
                 os.path.join(repo_path, f) if not os.path.isabs(f) else f
                 for f in changed
+                if _is_scannable_file(f)
             ]
 
         except Exception:
@@ -579,44 +610,49 @@ def gemini_scan(
         for root, _, filenames in os.walk(repo_path):
 
             for fn in filenames:
-
-                if fn.endswith(
-                    (
-                        ".py",".js",".ts",".java",".go",".rs",".cpp",".c",
-                        ".cs",".php",".rb",".swift",".kt",".scala",".lua",
-                        ".hs",".sh",".dart",".m",".mm",".zig",".nim"
-                    )
-                ):
-                    targets.append(os.path.join(root, fn))
+                if not _is_scannable_file(fn):
+                    continue
+                targets.append(os.path.join(root, fn))
 
     grouped: Dict[str, List[Dict]] = defaultdict(list)
 
     for t in targets:
+        abs_t, rel_t = _normalize_target(t)
 
-        if not os.path.exists(t):
+        if not os.path.exists(abs_t):
             continue
 
         try:
-            file_findings = scan_file_with_gemini(t)
+            file_findings = scan_file_with_gemini(abs_t)
         except Exception:
             continue
 
         if file_findings:
-            grouped[t].extend(file_findings)
+            grouped[rel_t].extend(file_findings)
 
         # Always try to scan for entry points if tree-sitter is available
         if TREE_SITTER_AVAILABLE:
             try:
-                entry_points = scan_file_for_entry_points(t)
+                entry_points = scan_file_for_entry_points(abs_t)
                 if entry_points:
-                    # Add entry points to the grouped results
-                    if t not in grouped:
-                        grouped[t] = []
-                    grouped[t].extend(entry_points)
+                    if rel_t not in grouped:
+                        grouped[rel_t] = []
+                    grouped[rel_t].extend(entry_points)
             except Exception:
                 continue
 
-    return dict(grouped)
+    findings = dict(grouped)
+
+    if output_path is None:
+        output_path = os.path.join(repo_path, "gemini_results.json")
+
+    try:
+        with open(output_path, "w", encoding="utf-8") as fh:
+            fh.write(gemini_findings_to_json(findings))
+    except Exception as e:
+        print(f"DEBUG: Failed to write Gemini results to {output_path}: {e}")
+
+    return findings
 
 
 # ------------------------------------------------------------

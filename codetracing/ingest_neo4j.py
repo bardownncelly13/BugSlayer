@@ -42,6 +42,7 @@ def upsert_record(tx, repo_name, repo_root, rec):
         "parameters": rec.get("parameters") or "",
         "start_line": rec.get("start_line"),
         "end_line": rec.get("end_line"),
+        # Persist the full function body extracted from the AST.
         "body": rec.get("body") or "",
         "container": rec.get("class"),
         "entrypoint": bool(rec.get("entrypoint", False)),
