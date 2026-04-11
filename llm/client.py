@@ -6,8 +6,21 @@ import re
 from openai import OpenAI
 
 
+def _ensure_dotenv_loaded() -> None:
+    if os.environ.get("TAMUS_AI_CHAT_API_ENDPOINT") and os.environ.get("TAMUS_AI_CHAT_API_KEY"):
+        return
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv()
+    except ImportError:
+        pass
+
+
 class LLMClient:
     def __init__(self):
+        _ensure_dotenv_loaded()
+
         # self.endpoint = os.getenv("JP_ENDPOINT")
         # self.api_key = os.getenv("JP_API_KEY")
         # self.provider = os.getenv("JP_PROVIDER")
@@ -88,6 +101,7 @@ class LLMClient:
         response = self.client.chat.completions.create(
             model=self.model,
             stream=False,
+            timeout=30,  # Add timeout to prevent hanging
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": prompt},

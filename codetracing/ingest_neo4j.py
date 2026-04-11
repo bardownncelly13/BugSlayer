@@ -21,6 +21,8 @@ def ensure_schema(tx):
     tx.run("CREATE INDEX function_entrypoint IF NOT EXISTS FOR (fn:Function) ON (fn.entrypoint)")
     tx.run("CREATE INDEX function_vulnerablefunc IF NOT EXISTS FOR (fn:Function) ON (fn.vulnerablefunc)")
     tx.run("CREATE INDEX file_path_idx IF NOT EXISTS FOR (f:File) ON (f.path)")
+    tx.run("CREATE INDEX function_vuln_issue IF NOT EXISTS FOR (fn:Function) ON (fn.vuln_issue)")
+    tx.run("CREATE INDEX function_vuln_severity IF NOT EXISTS FOR (fn:Function) ON (fn.vuln_severity)")
 
 
 def upsert_record(tx, repo_name, repo_root, rec):

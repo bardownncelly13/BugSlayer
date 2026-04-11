@@ -21,12 +21,26 @@ import argparse
 import shutil
 from time import ctime
 from path_utils import normalize_path_for_runtime
+import sys
+
+# Add repo root and codetracing to path for codetracing imports
+REPO_ROOT = os.path.abspath(os.path.dirname(__file__))
+sys.path.insert(0, REPO_ROOT)
+sys.path.insert(0, os.path.join(REPO_ROOT, "codetracing"))
+
+from codetracing.createCallgraph import main as create_callgraph_main
+from codetracing.update_funcs_from_gemini import main as update_funcs_from_gemini_main
+from codetracing.tainttrace.run_tainttrace import main as run_tainttrace_main
 
 def main(repo_path: str = ".", semgrep_config: str = None, base_ref: str = "origin/main", head_ref: str = "HEAD"):
     repo_path = normalize_path_for_runtime(repo_path)
     effective_base_ref = resolve_effective_base_ref(repo_path, base_ref)
     pr_base_branch = resolve_pr_base_branch(repo_path, effective_base_ref)
     print(f"[DEBUG] requested base_ref={base_ref!r}, effective_base_ref={effective_base_ref!r}, pr_base_branch={pr_base_branch!r}")
+
+    # Create call graph first
+    print("[*] Creating call graph...")
+    create_callgraph_main()
 
     triage = TriageStrategy()
     patcher = PatchStrategy()
@@ -51,6 +65,14 @@ def main(repo_path: str = ".", semgrep_config: str = None, base_ref: str = "orig
             print("Gemini scanner not available (missing dependency or import error)")
     else:
         print("no geminai api key")
+
+    # Update functions from Gemini results
+    print("[*] Updating functions from Gemini results...")
+    update_funcs_from_gemini_main()
+
+    # Run taint trace
+    print("[*] Running taint trace...")
+    run_tainttrace_main()
 
     # For each finding, run triage and (if real) propose a patch
     for file, file_findings in findings.items():

@@ -60,6 +60,18 @@ FUNCTION_NODE_TYPES = {
 _LIBS = {}
 
 
+def find_first_of_type(node, type_name: str):
+    if node is None:
+        return None
+    stack = [node]
+    while stack:
+        n = stack.pop()
+        if n.type == type_name:
+            return n
+        stack.extend(reversed(n.children))
+    return None
+
+
 def get_git_root(start_path=".") -> str:
     try:
         out = subprocess.run(
@@ -106,7 +118,6 @@ def find_first_identifier(node):
         n = stack.pop()
         if n.type == "identifier":
             return n
-        # DFS
         stack.extend(reversed(n.children))
     return None
 
@@ -139,16 +150,19 @@ def extract_functions(tree, source: bytes, rel_path: str, lang_name: str):
         if node.type in fn_types:
             name_node = node.child_by_field_name("name")
 
-            # tree-sitter-c / tree-sitter-cpp often nest the name under the declarator
+            # C/C++: name often isn't a direct field; search the subtree instead
             if not name_node and lang_name in ("c", "cpp"):
-                decl = node.child_by_field_name("declarator")
-                if decl:
-                    name_node = find_first_identifier(decl)
+                name_node = find_first_identifier(node)
 
+            # parameters: python has "parameters" field; C/C++ often nest "parameter_list"
             param_node = (
                 node.child_by_field_name("parameters")
                 or node.child_by_field_name("parameter_list")
             )
+
+            # C/C++ robustness: search the whole node for a parameter_list
+            if not param_node and lang_name in ("c", "cpp"):
+                param_node = find_first_of_type(node, "parameter_list")
 
             if name_node:
                 body = node_text(node, source)
@@ -178,7 +192,6 @@ def parse_repo(repo_root: str):
 
     for root, dirs, files in os.walk(repo_root):
         dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
-
         for file in files:
             ext = os.path.splitext(file)[1]
             if ext not in LANG_MAP:
@@ -229,6 +242,7 @@ def run_extract_funcs(repo_root: str, out_file: str):
     with open(out_file, "w", encoding="utf-8") as out_f:
         for rec in data:
             print(json.dumps(rec, ensure_ascii=False), file=out_f)
+
     print(
         json.dumps({"_stats": stats, "repo_root": repo_root}, ensure_ascii=False),
         file=sys.stderr,
@@ -249,7 +263,6 @@ def main():
     args = ap.parse_args()
 
     temp_dir = None
-
     if args.git:
         # Clone then scan clone root
         if is_git_url(args.git) or not os.path.isdir(args.git):
@@ -263,12 +276,12 @@ def main():
             get_git_root(args.repo) if args.repo == "." else os.path.abspath(args.repo)
         )
 
+    data, stats = parse_repo(repo_root)
+
     if args.out == "-":
-        data, stats = parse_repo(repo_root)
         for rec in data:
             print(json.dumps(rec, ensure_ascii=False))
     else:
-        data, stats = parse_repo(repo_root)
         with open(args.out, "w", encoding="utf-8") as out_f:
             for rec in data:
                 print(json.dumps(rec, ensure_ascii=False), file=out_f)

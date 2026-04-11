@@ -59,6 +59,7 @@ def load_language(lib_path: str, name: str) -> Language:
 
 
 LANGS = {name: load_language(LIB_PATH, name) for name in set(LANG_MAP.values())}
+
 PARSERS = {}
 for name, lang in LANGS.items():
     p = Parser()
@@ -131,9 +132,21 @@ def find_first_identifier(node):
     return None
 
 
+def find_first_of_type(node, type_name: str):
+    if node is None:
+        return None
+    stack = [node]
+    while stack:
+        n = stack.pop()
+        if n.type == type_name:
+            return n
+        stack.extend(reversed(n.children))
+    return None
+
+
 def c_callee_text(call_node, source: bytes) -> str:
     """
-    tree-sitter-c: call_expression has field 'function', which can be:
+    tree-sitter-c/cpp: call_expression has field 'function', which can be:
       - identifier                 foo(...)
       - field_expression           obj.method(...)
       - pointer_expression etc     (*fp)(...)
@@ -142,20 +155,18 @@ def c_callee_text(call_node, source: bytes) -> str:
     fn = call_node.child_by_field_name("function")
     if fn is None:
         return ""
-
-    # Prefer just the function identifier if possible
     if fn.type == "identifier":
         return node_text(fn, source).strip()
-
-    # obj.method(...) -> prefer the 'field' (method name)
     if fn.type == "field_expression":
         field = fn.child_by_field_name("field")
         if field and field.type == "identifier":
             return node_text(field, source).strip()
         ident = find_first_identifier(fn)
-        return node_text(ident, source).strip() if ident else node_text(fn, source).strip()
-
-    # Fallback: find first identifier somewhere inside
+        return (
+            node_text(ident, source).strip()
+            if ident
+            else node_text(fn, source).strip()
+        )
     ident = find_first_identifier(fn)
     return node_text(ident, source).strip() if ident else node_text(fn, source).strip()
 
@@ -171,10 +182,9 @@ def iter_calls(tree, source: bytes, rel_path: str, lang: str):
         if node.type in FN_NODES.get(lang, ()):
             name_node = node.child_by_field_name("name")
 
-            # For C/C++ function_definition name is often nested under declarator
+            # For C/C++ function_definition name is often nested; search subtree
             if name_node is None and lang in ("c", "cpp"):
-                decl = node.child_by_field_name("declarator")
-                name_node = find_first_identifier(decl) if decl else None
+                name_node = find_first_identifier(node)
 
             if name_node:
                 caller_name = node_text(name_node, source)
@@ -184,9 +194,13 @@ def iter_calls(tree, source: bytes, rel_path: str, lang: str):
                     node.child_by_field_name("parameters")
                     or node.child_by_field_name("parameter_list")
                 )
-                parameters = node_text(param_node, source) if param_node else ""
+                # C/C++: parameter_list is often nested (under declarator)
+                if not param_node and lang in ("c", "cpp"):
+                    param_node = find_first_of_type(node, "parameter_list")
 
+                parameters = node_text(param_node, source) if param_node else ""
                 caller_key = f"{rel_path}::{caller_name}{parameters}::{caller_start_line}"
+
                 current_fn = {
                     "caller_path": rel_path,
                     "caller_name": caller_name,
@@ -207,11 +221,15 @@ def iter_calls(tree, source: bytes, rel_path: str, lang: str):
                 )
                 if callee_node is None and node.children:
                     callee_node = node.children[0]
-                callee_text = node_text(callee_node, source).strip() if callee_node else ""
+                callee_text = (
+                    node_text(callee_node, source).strip() if callee_node else ""
+                )
 
             call_line = node.start_point[0] + 1
             callee_name = callee_name_from_text(callee_text)
-            callsite_id = make_callsite_id(current_fn["caller_key"], call_line, callee_text)
+            callsite_id = make_callsite_id(
+                current_fn["caller_key"], call_line, callee_text
+            )
 
             yield {
                 **current_fn,
@@ -237,6 +255,7 @@ def run_extract_calls(repo_root: str, out_file: str):
                     continue
                 abs_path = os.path.join(root, file)
                 rel_path = os.path.relpath(abs_path, repo_root)
+
                 try:
                     if os.stat(abs_path).st_size > MAX_BYTES:
                         continue
@@ -246,8 +265,9 @@ def run_extract_calls(repo_root: str, out_file: str):
                     tree = PARSERS[lang].parse(src)
                     for rec in iter_calls(tree, src, rel_path, lang):
                         print(json.dumps(rec, ensure_ascii=False), file=out_f)
-                except Exception:
-                    # If you want to debug failures, print the exception here.
+                except Exception as e:
+                    # Uncomment to debug
+                    # print(f"ERROR parsing calls in {abs_path}: {e}", file=sys.stderr)
                     pass
 
 
@@ -264,25 +284,4 @@ def main():
         for root, dirs, files in os.walk(repo_root):
             dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
             for file in files:
-                ext = os.path.splitext(file)[1]
-                if ext not in LANG_MAP:
-                    continue
-                abs_path = os.path.join(root, file)
-                rel_path = os.path.relpath(abs_path, repo_root)
-                try:
-                    if os.stat(abs_path).st_size > MAX_BYTES:
-                        continue
-                    lang = LANG_MAP[ext]
-                    with open(abs_path, "rb") as f:
-                        src = f.read()
-                    tree = PARSERS[lang].parse(src)
-                    for rec in iter_calls(tree, src, rel_path, lang):
-                        print(json.dumps(rec, ensure_ascii=False), file=out_f)
-                except Exception:
-                    pass
-    else:
-        run_extract_calls(repo_root, args.out)
-
-
-if __name__ == "__main__":
-    main()
+                ext

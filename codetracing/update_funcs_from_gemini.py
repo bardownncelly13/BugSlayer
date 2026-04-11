@@ -32,29 +32,34 @@ def update_function_flags(
     parameters="",
     is_vulnerable=None,
     is_entry_point=None,
+    vuln_issue=None,
+    vuln_message=None,
+    vuln_severity=None,
+    vuln_confidence=None,
 ):
-    """
-    Update a Function node with vulnerablefunc/entrypoint flags.
-
-    - function_name must be the *base name* (e.g., "vulnerable_copy"), NOT a full signature.
-    - parameters must match what was used to create the Function key during ingest.
-    - use None for a flag you don't want to overwrite.
-    """
     fn_key = f"{path}::{function_name}{parameters}::{function_line}"
-
     tx.run(
         """
         MATCH (fn:Function {key: $fn_key})
         SET fn.vulnerablefunc = coalesce($is_vulnerable, fn.vulnerablefunc),
-            fn.entrypoint     = coalesce($is_entry_point, fn.entrypoint)
+            fn.entrypoint     = coalesce($is_entry_point, fn.entrypoint),
+
+            // only set vuln metadata when provided (otherwise keep existing)
+            fn.vuln_issue     = coalesce($vuln_issue, fn.vuln_issue),
+            fn.vuln_message   = coalesce($vuln_message, fn.vuln_message),
+            fn.vuln_severity  = coalesce($vuln_severity, fn.vuln_severity),
+            fn.vuln_confidence= coalesce($vuln_confidence, fn.vuln_confidence)
         """,
         {
             "fn_key": fn_key,
             "is_vulnerable": is_vulnerable,
             "is_entry_point": is_entry_point,
+            "vuln_issue": vuln_issue,
+            "vuln_message": vuln_message,
+            "vuln_severity": vuln_severity,
+            "vuln_confidence": vuln_confidence,
         },
     )
-
 
 def process_gemini_results(json_file: str) -> int:
     """Parse gemini_results.json and update neo4j with flags."""
@@ -79,41 +84,31 @@ def process_gemini_results(json_file: str) -> int:
             for vuln in file_entry.get("vulnerabilities", []):
                 function_name = vuln.get("function")
                 is_entry_point = bool(vuln.get("is_entry_point", False))
-
                 if not function_name:
                     continue
 
                 base_function_name = function_name.split("(")[0].strip()
-
                 func_info = get_function_by_name(abs_path, base_function_name)
                 if not func_info:
-                    print(
-                        f"  Warning: Could not find function {function_name!r} "
-                        f"(base={base_function_name!r}) in {raw_path!r} -> {abs_path!r}"
-                    )
                     continue
 
                 function_line = func_info["start_line"]
                 parameters = func_info.get("parameters", "") or ""
 
-                print(
-                    f"  Found function lookup: base={base_function_name!r} path={abs_path!r} "
-                    f"start_line={function_line} parameters={parameters!r}"
-                )
-
                 session.execute_write(
                     update_function_flags,
                     path,
-                    base_function_name,  # IMPORTANT: base name only
+                    base_function_name,
                     function_line,
                     parameters,
                     is_vulnerable=True,
                     is_entry_point=is_entry_point if is_entry_point else None,
-                )
-                updates += 1
-                print(
-                    f"  Updated vulnerability: {path}::{base_function_name}{parameters}::{function_line} "
-                    f"(vulnerable=True, entrypoint={is_entry_point})"
+
+                    # NEW: vuln metadata
+                    vuln_issue=vuln.get("issue"),
+                    vuln_message=vuln.get("message"),
+                    vuln_severity=vuln.get("severity"),
+                    vuln_confidence=vuln.get("confidence"),
                 )
 
             # -------------------------

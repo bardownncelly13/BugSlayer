@@ -26,7 +26,7 @@ FUNCTION_NODE_TYPES = {
 }
 
 # Keep CDLLs alive
-_LIBS = {}
+_LIBS: Dict[str, Any] = {}
 
 # Initialize parsers
 PARSERS: Dict[str, Parser] = {}
@@ -66,7 +66,7 @@ def node_text(node, source: bytes) -> str:
 
 
 def find_first_identifier(node):
-    """Walk a subtree and return the first `identifier` node (used for C/C++ declarators)."""
+    """Walk a subtree and return the first `identifier` node."""
     if node is None:
         return None
     stack = [node]
@@ -78,28 +78,42 @@ def find_first_identifier(node):
     return None
 
 
+def find_first_of_type(node, type_name: str):
+    """Walk a subtree and return the first node of type type_name."""
+    if node is None:
+        return None
+    stack = [node]
+    while stack:
+        n = stack.pop()
+        if n.type == type_name:
+            return n
+        stack.extend(reversed(n.children))
+    return None
+
+
 def _function_dict_from_node(
     node, source: bytes, filepath: str, node_name: str, parameters: str = ""
 ) -> Dict[str, Any]:
     start_line = node.start_point[0] + 1
     end_line = node.end_point[0] + 1
+    parameters = parameters or ""
     return {
         "path": filepath,
         "name": node_name,
-        "parameters": parameters or "",
+        "parameters": parameters,
         "start_line": start_line,
         "end_line": end_line,
         "body": node_text(node, source),
         # NOTE: keep fn_key format consistent with your Neo4j ingest:
         # path::name{parameters}::start_line
-        "fn_key": f"{filepath}::{node_name}{parameters or ''}::{start_line}",
+        "fn_key": f"{filepath}::{node_name}{parameters}::{start_line}",
     }
 
 
 def collect_functions_named(filepath: str, function_name: str) -> List[Dict[str, Any]]:
     """
     All tree-sitter function-like nodes whose declared name matches function_name.
-    For C/C++ the function name is often nested under the declarator, so we use a fallback.
+    For C/C++ the function name is often nested; we use a subtree fallback.
     """
     _init_parsers()
     ext = os.path.splitext(filepath)[1].lower()
@@ -118,7 +132,6 @@ def collect_functions_named(filepath: str, function_name: str) -> List[Dict[str,
 
     tree = parser.parse(source)
     fn_types = FUNCTION_NODE_TYPES.get(lang_name, ("function_definition",))
-
     out: List[Dict[str, Any]] = []
     stack = [tree.root_node]
 
@@ -128,23 +141,25 @@ def collect_functions_named(filepath: str, function_name: str) -> List[Dict[str,
         if node.type in fn_types:
             name_node = node.child_by_field_name("name")
 
-            # C/C++: name often not directly available; pull from declarator
+            # C/C++: name often not directly available; search subtree
             if name_node is None and lang_name in ("c", "cpp"):
-                decl = node.child_by_field_name("declarator")
-                if decl:
-                    name_node = find_first_identifier(decl)
+                name_node = find_first_identifier(node)
 
             if name_node:
                 node_name = node_text(name_node, source)
-
                 if node_name == function_name:
                     param_node = (
                         node.child_by_field_name("parameters")
                         or node.child_by_field_name("parameter_list")
                     )
+                    if not param_node and lang_name in ("c", "cpp"):
+                        param_node = find_first_of_type(node, "parameter_list")
                     parameters = node_text(param_node, source) if param_node else ""
+
                     out.append(
-                        _function_dict_from_node(node, source, filepath, node_name, parameters)
+                        _function_dict_from_node(
+                            node, source, filepath, node_name, parameters
+                        )
                     )
 
         for child in reversed(node.children):
@@ -214,18 +229,16 @@ def get_enclosing_function_at_line(filepath: str, line_1based: int) -> Optional[
             el = node.end_point[0] + 1
             if sl <= line_1based <= el:
                 name_node = node.child_by_field_name("name")
-
                 if name_node is None and lang_name in ("c", "cpp"):
-                    decl = node.child_by_field_name("declarator")
-                    if decl:
-                        name_node = find_first_identifier(decl)
-
+                    name_node = find_first_identifier(node)
                 node_name = node_text(name_node, source) if name_node else "<anonymous>"
 
                 param_node = (
                     node.child_by_field_name("parameters")
                     or node.child_by_field_name("parameter_list")
                 )
+                if not param_node and lang_name in ("c", "cpp"):
+                    param_node = find_first_of_type(node, "parameter_list")
                 parameters = node_text(param_node, source) if param_node else ""
 
                 span = el - sl
@@ -235,7 +248,6 @@ def get_enclosing_function_at_line(filepath: str, line_1based: int) -> Optional[
             visit(c)
 
     visit(tree.root_node)
-
     if not candidates:
         return None
 
