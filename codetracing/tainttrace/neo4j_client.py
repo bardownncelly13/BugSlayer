@@ -183,9 +183,9 @@ class Neo4jClient:
 
     def fetch_callsites_for_entrypoint_to_any_vuln(self, entry_key: str, depth=50):
         depth = int(depth)
-        q = f"""
-        MATCH (e:Function {{key:$entry}})
-        OPTIONAL MATCH p = (e)-[:CALLS*1..{depth}]->(v:Function {{vulnerablefunc:true}})
+        q = """
+        MATCH (e:Function {key:$entry})
+        OPTIONAL MATCH p = (e)-[:CALLS*1..$depth]->(v:Function {vulnerablefunc:true})
         WITH e, collect(DISTINCT v.key) AS vulnKeys, collect(p) AS ps
         UNWIND ps AS p
         UNWIND relationships(p) AS r
@@ -196,8 +196,8 @@ class Neo4jClient:
         RETURN
         e.key AS entrypoint,
         vulnKeys AS vulnerableKeys,
-        collect(DISTINCT {{caller:caller.key, callee:callee.key}}) AS edges,
-        collect(DISTINCT {{
+        collect(DISTINCT {caller:caller.key, callee:callee.key}) AS edges,
+        collect(DISTINCT {
             id: cs.id,
             caller: caller.key,
             callee: callee.key,
@@ -205,6 +205,6 @@ class Neo4jClient:
             snippet: cs.snippet,
             edge_transfer_json: coalesce(cs.edge_transfer_json,""),
             edge_transfer_confidence: coalesce(cs.edge_transfer_confidence,0.0)
-        }}) AS callsites
+        }) AS callsites
         """
-        return self.read(q, entry=entry_key)
+        return self.read(q, entry=entry_key, depth=depth)
