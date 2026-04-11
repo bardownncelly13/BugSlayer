@@ -88,7 +88,14 @@ class Neo4jClient:
     # ---------- Stage 1: function summaries on routes (missing or overwrite) ----------
 
     def fetch_functions_on_any_entry_to_vuln_route(self, depth=50, limit=50000):
-        depth = int(depth)
+        # Validate depth to prevent Cypher injection
+        try:
+            depth = int(depth)
+            if depth < 1 or depth > 100:  # reasonable bounds for call depth
+                raise ValueError("Depth must be between 1 and 100")
+        except (ValueError, TypeError):
+            raise ValueError("Depth must be a valid positive integer between 1 and 100")
+        
         q = f"""
         MATCH p = (e:Function {{entrypoint:true}})-[:CALLS*1..{depth}]->(:Function {{vulnerablefunc:true}})
         UNWIND nodes(p) AS n
