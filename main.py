@@ -44,8 +44,8 @@ def main(repo_path: str = ".", semgrep_config: str = None, base_ref: str = "orig
     print(f"[DEBUG] requested base_ref={base_ref!r}, effective_base_ref={effective_base_ref!r}, pr_base_branch={pr_base_branch!r}")
 
     # Create call graph first
-    # print("[*] Creating call graph...")
-    # create_callgraph_main()
+    print("[*] Creating call graph...")
+    create_callgraph_main()
 
     triage = TriageStrategy()
     patcher = PatchStrategy()
@@ -53,34 +53,34 @@ def main(repo_path: str = ".", semgrep_config: str = None, base_ref: str = "orig
     print_findings(findings)
 
     # Mark enclosing functions as vulnerable in Neo4j so taint trace can reach them from entrypoints.
-    # apply_semgrep_findings_to_neo4j(findings, repo_path)
+    apply_semgrep_findings_to_neo4j(findings, repo_path)
 
     # If a Gemini API key is configured, run a complementary LLM-based scan
     # over the same repository (changed files when base_ref provided).
-    # if os.getenv("GEMINI_API_KEY"):
-    #     try:
-    #         from scanners.flashscan import gemini_scan, print_gemini_findings, gemini_findings_to_json
-    #         try:
-    #             gemini_findings = gemini_scan(repo_path=repo_path, base_ref=effective_base_ref, head_ref=head_ref)
-    #             print_gemini_findings(gemini_findings)
-    #             # if gemini_findings:
-    #                 # print("\n=== Gemini Results (JSON) ===\n")
-    #                 # print(gemini_findings_to_json(gemini_findings))
-    #         except Exception as e:
-    #             print(f"Gemini scan failed: {e}")
-    #     except Exception:
-    #         # If flashscan or its optional deps are unavailable, continue silently
-    #         print("Gemini scanner not available (missing dependency or import error)")
-    # else:
-    #     print("no geminai api key")
+    if os.getenv("GEMINI_API_KEY"):
+        try:
+            from scanners.flashscan import gemini_scan, print_gemini_findings, gemini_findings_to_json
+            try:
+                gemini_findings = gemini_scan(repo_path=repo_path, base_ref=effective_base_ref, head_ref=head_ref)
+                print_gemini_findings(gemini_findings)
+                # if gemini_findings:
+                    # print("\n=== Gemini Results (JSON) ===\n")
+                    # print(gemini_findings_to_json(gemini_findings))
+            except Exception as e:
+                print(f"Gemini scan failed: {e}")
+        except Exception:
+            # If flashscan or its optional deps are unavailable, continue silently
+            print("Gemini scanner not available (missing dependency or import error)")
+    else:
+        print("no geminai api key")
 
-    # # Update functions from Gemini results
-    # print("[*] Updating functions from Gemini results...")
-    # update_funcs_from_gemini_main()
+    # Update functions from Gemini results
+    print("[*] Updating functions from Gemini results...")
+    update_funcs_from_gemini_main()
 
-    # # Run taint trace
-    # print("[*] Running taint trace...")
-    # run_tainttrace_main()
+    # Run taint trace
+    print("[*] Running taint trace...")
+    run_tainttrace_main()
 
     taint_path = os.environ.get("TAINT_FINDINGS_JSONL")
     if not taint_path:
