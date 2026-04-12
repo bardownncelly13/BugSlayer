@@ -676,7 +676,7 @@ def create_patch_pr(repo_path, finding, file, patch, pr_base_branch):
         # # CONFIG AZURE so it doesnt ask for PAT again
         # configure_azure_git_auth(repo_path)
         # # Push
-        # push_branch(repo_path, branch_name)
+        push_branch(repo_path, branch_name)
 
         # Create PR
         head = branch_name
@@ -714,13 +714,13 @@ def create_patch_pr(repo_path, finding, file, patch, pr_base_branch):
 
         {notes}
     """
-        print(f"Creating PR for {file}")
-        print(f"Title: {title}")
-        print(f"Body: {body}")
-        print(f"Head: {head}")
-        print(f"Base: {base}")
+        # print(f"Creating PR for {file}")
+        # print(f"Title: {title}")
+        # print(f"Body: {body}")
+        # print(f"Head: {head}")
+        # print(f"Base: {base}")
         # print(f"BASE (This should be a branch name): {base}")
-        # create_pr(repo_path, head, base, title, body)
+        create_pr(repo_path, head, base, title, body)
     except Exception as e:
         print(f"create_patch_pr failed with error {e}")
     finally:

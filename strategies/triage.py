@@ -9,9 +9,13 @@ class TriageStrategy(Strategy):
         self.llm = LLMClient()
 
     def run(self, context: dict) -> TriageResult | None:
+        finding_repr = context["finding"]
+        if isinstance(finding_repr, dict):
+            finding_repr = json.dumps(finding_repr, indent=2, default=str)
+
         prompt = f"""
         Scanner reported:
-        {context['finding']}
+        {finding_repr}
 
         Code context:
         {context['diff']}

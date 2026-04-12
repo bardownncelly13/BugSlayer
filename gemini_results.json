@@ -12,7 +12,7 @@
         "snippet": "NEO4J_PASS=\"${NEO4J_PASS:-password}\"",
         "snippet_line": 14,
         "issue": "default-password",
-        "message": "The Neo4j password defaults to 'password', which is a known weak credential.",
+        "message": "The default password 'password' is used for the Neo4j database. This is a security risk.",
         "severity": "high",
         "confidence": 1.0
       },
@@ -24,10 +24,49 @@
         "is_entry_point": false,
         "snippet": "docker compose down -v --remove-orphans || true",
         "snippet_line": 29,
-        "issue": "compose-down-failure",
-        "message": "Ignoring failure of docker compose down may leave dangling containers and volumes and cause unpredictable behavior in the next compose up.",
-        "severity": "low",
-        "confidence": 0.7
+        "issue": "command-injection",
+        "message": "The command `docker compose down -v --remove-orphans || true` is vulnerable to command injection if any of the docker compose configuration files contains user-controlled data that is not properly escaped.",
+        "severity": "medium",
+        "confidence": 0.4
+      },
+      {
+        "vulnerability_number": 3,
+        "function": "GLOBAL_SCOPE",
+        "function_line": null,
+        "function_class": null,
+        "is_entry_point": false,
+        "snippet": "rm -f \"$FUNCS_JSONL\" \"$CALLS_JSONL\"",
+        "snippet_line": 56,
+        "issue": "command-injection",
+        "message": "The command `rm -f \"$FUNCS_JSONL\" \"$CALLS_JSONL\"` is vulnerable to command injection because the variables `$FUNCS_JSONL` and `$CALLS_JSONL` are user-controlled and not properly escaped. An attacker could inject arbitrary commands into these variables.",
+        "severity": "high",
+        "confidence": 0.9
+      },
+      {
+        "vulnerability_number": 4,
+        "function": "GLOBAL_SCOPE",
+        "function_line": null,
+        "function_class": null,
+        "is_entry_point": false,
+        "snippet": "python3 codetracing/ingest_neo4j.py \"$FUNCS_JSONL\"",
+        "snippet_line": 66,
+        "issue": "command-injection",
+        "message": "The command `python3 codetracing/ingest_neo4j.py \"$FUNCS_JSONL\"` is vulnerable to command injection because the variable `$FUNCS_JSONL` is user-controlled and not properly escaped. An attacker could inject arbitrary commands into this variable.",
+        "severity": "high",
+        "confidence": 0.9
+      },
+      {
+        "vulnerability_number": 5,
+        "function": "GLOBAL_SCOPE",
+        "function_line": null,
+        "function_class": null,
+        "is_entry_point": false,
+        "snippet": "python3 codetracing/ingest_calls_neo4j.py \"$CALLS_JSONL\"",
+        "snippet_line": 69,
+        "issue": "command-injection",
+        "message": "The command `python3 codetracing/ingest_calls_neo4j.py \"$CALLS_JSONL\"` is vulnerable to command injection because the variable `$CALLS_JSONL` is user-controlled and not properly escaped. An attacker could inject arbitrary commands into this variable.",
+        "severity": "high",
+        "confidence": 0.9
       }
     ],
     "entry_points": []
@@ -42,12 +81,12 @@
         "function_line": 7,
         "function_class": "CodeTraceInfo",
         "is_entry_point": false,
-        "snippet": "        name = sig.split(\"(\")[0]\n\n        params = sig.split(\"(\")[1].rstrip(\")\")",
-        "snippet_line": 11,
-        "issue": "DoS via unbounded split",
-        "message": "The `split` function without a `maxsplit` argument can lead to excessive memory usage or denial-of-service if the input string contains a large number of delimiters, potentially causing the program to crash or become unresponsive.",
-        "severity": "medium",
-        "confidence": 0.8
+        "snippet": "        params = sig.split(\"(\")[1].rstrip(\")\")",
+        "snippet_line": 13,
+        "issue": "Missing input validation",
+        "message": "The code does not validate the input 'sig' before splitting it, potentially leading to an IndexError if '(' or ')' are missing or improperly formatted.",
+        "severity": "low",
+        "confidence": 0.7
       }
     ],
     "entry_points": []
@@ -75,35 +114,22 @@
   },
   {
     "file_number": 4,
-    "path": "codetracing/extract_calls.py",
-    "vulnerabilities": [
+    "path": "codetracing/entrypoint_vuln_subgraphs.py",
+    "vulnerabilities": [],
+    "entry_points": [
       {
-        "vulnerability_number": 1,
-        "function": "run_extract_calls(repo_root: str, out_file: str)",
-        "function_line": 248,
+        "entry_point_number": 1,
+        "function": "main",
+        "function_line": 60,
         "function_class": null,
-        "is_entry_point": false,
-        "snippet": "with open(out_file, \"w\", encoding=\"utf-8\") as out_f:",
-        "snippet_line": 249,
-        "issue": "Path Traversal",
-        "message": "The `out_file` parameter is used to open a file for writing. If an attacker can control the value of `out_file`, they could write to arbitrary locations on the file system, potentially overwriting critical system files or injecting malicious code. This is a path traversal vulnerability.",
-        "severity": "high",
-        "confidence": 0.9
-      },
-      {
-        "vulnerability_number": 2,
-        "function": "main()",
-        "function_line": 274,
-        "function_class": null,
-        "is_entry_point": true,
-        "snippet": "out_f = sys.stdout",
-        "snippet_line": 283,
-        "issue": "Unused variable",
-        "message": "Variable out_f is assigned but never used",
-        "severity": "low",
-        "confidence": 0.8
+        "is_entry_point": true
       }
-    ],
+    ]
+  },
+  {
+    "file_number": 5,
+    "path": "codetracing/extract_calls.py",
+    "vulnerabilities": [],
     "entry_points": [
       {
         "entry_point_number": 1,
@@ -115,23 +141,9 @@
     ]
   },
   {
-    "file_number": 5,
+    "file_number": 6,
     "path": "codetracing/extract_funcs.py",
-    "vulnerabilities": [
-      {
-        "vulnerability_number": 1,
-        "function": "clone_to_temp(git_url_or_path: str)",
-        "function_line": 229,
-        "function_class": null,
-        "is_entry_point": true,
-        "snippet": "temp_dir = tempfile.mkdtemp(prefix=\"codetrace_repo_\")\n        subprocess.run([\"git\", \"clone\", git_url_or_path, temp_dir], check=True)",
-        "snippet_line": 235,
-        "issue": "Command-Injection",
-        "message": "The `git clone` command is constructed using user-provided input `git_url_or_path` without proper sanitization, leading to a command injection vulnerability.",
-        "severity": "high",
-        "confidence": 0.9
-      }
-    ],
+    "vulnerabilities": [],
     "entry_points": [
       {
         "entry_point_number": 1,
@@ -150,21 +162,80 @@
     ]
   },
   {
-    "file_number": 6,
+    "file_number": 7,
+    "path": "codetracing/get_func_by_name.py",
+    "vulnerabilities": [
+      {
+        "vulnerability_number": 1,
+        "function": "GLOBAL_SCOPE",
+        "function_line": null,
+        "function_class": null,
+        "is_entry_point": false,
+        "snippet": "lib = ctypes.CDLL(lib_path)",
+        "snippet_line": 38,
+        "issue": "CDLL_Arbitrary_Load",
+        "message": "The `ctypes.CDLL` function is used to load a dynamic link library from a path. If the `lib_path` variable is derived from user input or an external source, it could lead to arbitrary code execution by loading a malicious library.",
+        "severity": "high",
+        "confidence": 0.9
+      },
+      {
+        "vulnerability_number": 2,
+        "function": "GLOBAL_SCOPE",
+        "function_line": null,
+        "function_class": null,
+        "is_entry_point": false,
+        "snippet": "filepath = sys.argv[1]",
+        "snippet_line": 264,
+        "issue": "command_line_injection",
+        "message": "The script takes a file path as a command line argument without any sanitization. This could potentially lead to command injection if a malicious file path is provided.",
+        "severity": "medium",
+        "confidence": 0.7
+      },
+      {
+        "vulnerability_number": 3,
+        "function": "GLOBAL_SCOPE",
+        "function_line": null,
+        "function_class": null,
+        "is_entry_point": false,
+        "snippet": "function_name = sys.argv[2]",
+        "snippet_line": 265,
+        "issue": "command_line_injection",
+        "message": "The script takes a function name as a command line argument without any sanitization. This could potentially lead to command injection if a malicious function name is provided.",
+        "severity": "medium",
+        "confidence": 0.7
+      },
+      {
+        "vulnerability_number": 4,
+        "function": "GLOBAL_SCOPE",
+        "function_line": null,
+        "function_class": null,
+        "is_entry_point": false,
+        "snippet": "line = int(sys.argv[3]) if len(sys.argv) > 3 else None",
+        "snippet_line": 266,
+        "issue": "command_line_injection",
+        "message": "The script takes a line number as a command line argument without any sanitization. This could potentially lead to command injection if a malicious line number is provided.",
+        "severity": "medium",
+        "confidence": 0.7
+      }
+    ],
+    "entry_points": []
+  },
+  {
+    "file_number": 8,
     "path": "codetracing/ingest_calls_neo4j.py",
     "vulnerabilities": [
       {
         "vulnerability_number": 1,
-        "function": "NEO4J_PASS = os.environ.get(\"NEO4J_PASS\", \"password\")",
-        "function_line": 9,
+        "function": "NEO4J_PASS",
+        "function_line": null,
         "function_class": null,
         "is_entry_point": false,
         "snippet": "NEO4J_PASS = os.environ.get(\"NEO4J_PASS\", \"password\")",
         "snippet_line": 9,
-        "issue": "default-password",
-        "message": "The environment variable `NEO4J_PASS` defaults to `password`.",
-        "severity": "high",
-        "confidence": 1.0
+        "issue": "Hardcoded Password",
+        "message": "The default password for Neo4j is hardcoded. This could lead to unauthorized access if the environment variable is not set.",
+        "severity": "medium",
+        "confidence": 0.7
       }
     ],
     "entry_points": [
@@ -178,7 +249,7 @@
     ]
   },
   {
-    "file_number": 7,
+    "file_number": 9,
     "path": "codetracing/ingest_neo4j.py",
     "vulnerabilities": [
       {
@@ -189,10 +260,23 @@
         "is_entry_point": false,
         "snippet": "NEO4J_PASS = os.environ.get(\"NEO4J_PASS\", \"password\")",
         "snippet_line": 8,
-        "issue": "Default Password",
-        "message": "The NEO4J_PASS environment variable defaults to 'password'. This is a weak default and should be changed.",
+        "issue": "Hardcoded Password",
+        "message": "The default password for Neo4j is hardcoded. This is a security risk if the environment variable is not set.",
         "severity": "high",
         "confidence": 0.9
+      },
+      {
+        "vulnerability_number": 2,
+        "function": "upsert_record(tx, repo_name, repo_root, rec)",
+        "function_line": 28,
+        "function_class": null,
+        "is_entry_point": false,
+        "snippet": "    tx.run(\n        \"\"\"\n        MERGE (r:Repo {name: $repo_name})\n        ON CREATE SET r.root = $repo_root\n\n        MERGE (f:File {path: $path})\n        MERGE (r)-[:HAS_FILE]->(f)\n\n        MERGE (fn:Function {key: $fn_key})\n        SET fn.name = $name,\n            fn.language = $language,\n            fn.parameters = $parameters,\n            fn.start_line = $start_line,\n            fn.end_line = $end_line,\n            fn.body = $body,\n            fn.path = $path,\n            fn.container = $container,\n            fn.entrypoint = $entrypoint,\n            fn.vulnerablefunc = $vulnerablefunc\n\n        MERGE (f)-[:DEFINES]->(fn)\n        \"\"\",\n        params,\n    )",
+        "snippet_line": 54,
+        "issue": "Cypher Injection",
+        "message": "The function `upsert_record` constructs a Cypher query using parameters derived from the input JSONL file.  If the values in the JSONL file are not properly validated or sanitized, it could lead to Cypher injection vulnerabilities. An attacker could inject malicious Cypher code into the `name`, `path`, or other string fields, potentially gaining unauthorized access to or control over the Neo4j database.",
+        "severity": "medium",
+        "confidence": 0.8
       }
     ],
     "entry_points": [
@@ -206,7 +290,27 @@
     ]
   },
   {
-    "file_number": 8,
+    "file_number": 10,
+    "path": "codetracing/parsers/build_treesitter.py",
+    "vulnerabilities": [
+      {
+        "vulnerability_number": 1,
+        "function": "GLOBAL_SCOPE",
+        "function_line": null,
+        "function_class": null,
+        "is_entry_point": false,
+        "snippet": "os.environ[\"CFLAGS\"] = \"-std=c11\"",
+        "snippet_line": 2,
+        "issue": "OS_ENVIRONMENT_INJECTION",
+        "message": "The CFLAGS environment variable is being set. If an attacker can control any part of this string, they can inject arbitrary compiler flags, potentially leading to arbitrary code execution during the build process.",
+        "severity": "high",
+        "confidence": 0.9
+      }
+    ],
+    "entry_points": []
+  },
+  {
+    "file_number": 11,
     "path": "codetracing/resolve_calls_llm.py",
     "vulnerabilities": [],
     "entry_points": [
@@ -220,7 +324,182 @@
     ]
   },
   {
-    "file_number": 9,
+    "file_number": 12,
+    "path": "codetracing/tainttrace/neo4j_client.py",
+    "vulnerabilities": [
+      {
+        "vulnerability_number": 1,
+        "function": "fetch_route_callsites_for_transfer(self, depth=50, limit=2000, overwrite=False)",
+        "function_line": 26,
+        "function_class": "Neo4jClient",
+        "is_entry_point": false,
+        "snippet": "q = f\"\"\"\n        MATCH p = (e:Function {{entrypoint:true}})-[:CALLS*1..{depth}]->(:Function {{vulnerablefunc:true}})\n        UNWIND relationships(p) AS r\n        WITH DISTINCT startNode(r) AS caller, endNode(r) AS callee\n        MATCH (caller)-[:HAS_CALLSITE]->(cs:CallSite)-[:RESOLVES_TO]->(callee)\n        {where}\n        RETURN DISTINCT\n        cs.id AS callsite_id,\n        coalesce(cs.language,\"\" AS language,\n        cs.snippet AS snippet,\n        caller.key AS caller_key,\n        coalesce(caller.parameters,\"\" AS caller_parameters,\n        coalesce(caller.body,\"\" AS caller_body,\n        callee.key AS callee_key,\n        coalesce(callee.parameters,\"\" AS callee_parameters,\n        coalesce(callee.body,\"\" AS callee_body,\n        coalesce(cs.edge_transfer_json,\"\" AS edge_transfer_json,\n        coalesce(cs.edge_transfer_confidence,0.0 AS edge_transfer_confidence\n        LIMIT $limit\n        \"\"\"",
+        "snippet_line": null,
+        "issue": "string-format-injection",
+        "message": "The `depth` variable, originating from user input, is directly injected into the cypher query string, creating a potential Cypher injection vulnerability. The `where` variable is also vulnerable, as it uses `overwrite` to determine the content, which is also user controlled.",
+        "severity": "high",
+        "confidence": 0.9
+      },
+      {
+        "vulnerability_number": 2,
+        "function": "fetch_reachable_vulnerable_functions(self, depth=50, limit=5000)",
+        "function_line": 67,
+        "function_class": "Neo4jClient",
+        "is_entry_point": false,
+        "snippet": "q = f\"\"\"\n        MATCH p = (e:Function {{entrypoint:true}})-[:CALLS*1..{depth}]->(v:Function {{vulnerablefunc:true}})\n        WITH DISTINCT v\n        RETURN v.key AS key, v.language AS language, v.body AS body,\n               v.vuln_issue AS vuln_issue, v.vuln_message AS vuln_message\n        LIMIT $limit\n        \"\"\"",
+        "snippet_line": 69,
+        "issue": "string-format-injection",
+        "message": "The `depth` variable, originating from user input, is directly injected into the cypher query string, creating a potential Cypher injection vulnerability.",
+        "severity": "high",
+        "confidence": 0.9
+      },
+      {
+        "vulnerability_number": 3,
+        "function": "fetch_functions_on_any_entry_to_vuln_route(self, depth=50, limit=50000)",
+        "function_line": 90,
+        "function_class": "Neo4jClient",
+        "is_entry_point": false,
+        "snippet": "q = f\"\"\"\n        MATCH p = (e:Function {{entrypoint:true}})-[:CALLS*1..{depth}]->(:Function {{vulnerablefunc:true}})\n        UNWIND nodes(p) AS n\n        WITH DISTINCT n\n        WHERE n:Function\n        RETURN n.key AS key, n.language AS language, n.body AS body, n.parameters AS parameters,\n               coalesce(n.func_summary_json,\"\" AS func_summary_json\n        LIMIT $limit\n        \"\"\"",
+        "snippet_line": null,
+        "issue": "string-format-injection",
+        "message": "The `depth` variable, originating from user input, is directly injected into the cypher query string, creating a potential Cypher injection vulnerability.",
+        "severity": "high",
+        "confidence": 0.9
+      },
+      {
+        "vulnerability_number": 4,
+        "function": "fetch_functions_missing_summary(self, depth=50, limit=5000)",
+        "function_line": 103,
+        "function_class": "Neo4jClient",
+        "is_entry_point": false,
+        "snippet": "q = f\"\"\"\n        MATCH p = (e:Function {{entrypoint:true}})-[:CALLS*1..{depth}]->(:Function {{vulnerablefunc:true}})\n        UNWIND nodes(p) AS n\n        WITH DISTINCT n\n        WHERE n:Function AND (n.func_summary_json IS NULL OR n.func_summary_json = \"\")\n        RETURN n.key AS key, n.language AS language, n.body AS body, n.parameters AS parameters\n        LIMIT $limit\n        \"\"\"",
+        "snippet_line": 105,
+        "issue": "string-format-injection",
+        "message": "The `depth` variable, originating from user input, is directly injected into the cypher query string, creating a potential Cypher injection vulnerability.",
+        "severity": "high",
+        "confidence": 0.9
+      },
+      {
+        "vulnerability_number": 5,
+        "function": "fetch_route_callsites_for_argmap(self, depth=50, limit=5000, overwrite=False)",
+        "function_line": 127,
+        "function_class": "Neo4jClient",
+        "is_entry_point": false,
+        "snippet": "q = f\"\"\"\n        MATCH p = (e:Function {{entrypoint:true}})-[:CALLS*1..{depth}]->(:Function {{vulnerablefunc:true}})\n        UNWIND relationships(p) AS r\n        WITH DISTINCT startNode(r) AS caller, endNode(r) AS callee\n        MATCH (caller)-[:HAS_CALLSITE]->(cs:CallSite)-[:RESOLVES_TO]->(callee)\n        {where}\n        RETURN DISTINCT\n          cs.id AS callsite_id,\n          cs.language AS language,\n          cs.snippet AS snippet,\n          caller.key AS caller_key,\n          caller.parameters AS caller_parameters,\n          callee.key AS callee_key,\n          callee.parameters AS callee_parameters,\n          coalesce(cs.arg_map_json,\"\" AS arg_map_json,\n          coalesce(cs.arg_confidence,0.0 AS arg_confidence\n        LIMIT $limit\n        \"\"\"",
+        "snippet_line": null,
+        "issue": "string-format-injection",
+        "message": "The `depth` variable, originating from user input, is directly injected into the cypher query string, creating a potential Cypher injection vulnerability. The `where` variable is also vulnerable, as it uses `overwrite` to determine the content, which is also user controlled.",
+        "severity": "high",
+        "confidence": 0.9
+      },
+      {
+        "vulnerability_number": 6,
+        "function": "fetch_reachable_vuln_contracts(self, depth=50, limit=50000)",
+        "function_line": 174,
+        "function_class": "Neo4jClient",
+        "is_entry_point": false,
+        "snippet": "q = f\"\"\"\n        MATCH p = (e:Function {{entrypoint:true}})-[:CALLS*1..{depth}]->(v:Function {{vulnerablefunc:true}})\n        WITH DISTINCT v\n        RETURN v.key AS key, coalesce(v.vuln_contract_json,\"\" AS vuln_contract_json\n        LIMIT $limit\n        \"\"\"",
+        "snippet_line": null,
+        "issue": "string-format-injection",
+        "message": "The `depth` variable, originating from user input, is directly injected into the cypher query string, creating a potential Cypher injection vulnerability.",
+        "severity": "high",
+        "confidence": 0.9
+      },
+      {
+        "vulnerability_number": 7,
+        "function": "fetch_callsites_for_entrypoint_to_any_vuln(self, entry_key: str, depth=50)",
+        "function_line": 184,
+        "function_class": "Neo4jClient",
+        "is_entry_point": false,
+        "snippet": "q = f\"\"\"\n        MATCH (e:Function {{key:$entry}})\n        OPTIONAL MATCH p = (e)-[:CALLS*1..{depth}]->(v:Function {{vulnerablefunc:true}})\n        WITH e, collect(DISTINCT v.key) AS vulnKeys, collect(p) AS ps\n        UNWIND ps AS p\n        UNWIND relationships(p) AS r\n        WITH e, vulnKeys, collect(DISTINCT r) AS rs\n        UNWIND rs AS r\n        WITH e, vulnKeys, startNode(r) AS caller, endNode(r) AS callee\n        OPTIONAL MATCH (caller)-[:HAS_CALLSITE]->(cs:CallSite)-[:RESOLVES_TO]->(callee)\n        RETURN\n        e.key AS entrypoint,\n        vulnKeys AS vulnerableKeys,\n        collect(DISTINCT {{caller:caller.key, callee:callee.key}}) AS edges,\n        collect(DISTINCT {{\n            id: cs.id,\n            caller: caller.key,\n            callee: callee.key,\n            language: cs.language,\n            snippet: cs.snippet,\n            edge_transfer_json: coalesce(cs.edge_transfer_json,\"\" AS edge_transfer_json,\n            edge_transfer_confidence: coalesce(cs.edge_transfer_confidence,0.0 AS edge_transfer_confidence\n        }}) AS callsites\n        \"\"\"",
+        "snippet_line": null,
+        "issue": "string-format-injection",
+        "message": "The `depth` variable, originating from user input, is directly injected into the cypher query string, creating a potential Cypher injection vulnerability.",
+        "severity": "high",
+        "confidence": 0.9
+      }
+    ],
+    "entry_points": [
+      {
+        "entry_point_number": 1,
+        "function": "fetch_entrypoints",
+        "function_line": 165,
+        "function_class": "Neo4jClient",
+        "is_entry_point": true
+      }
+    ]
+  },
+  {
+    "file_number": 13,
+    "path": "codetracing/tainttrace/run_tainttrace.py",
+    "vulnerabilities": [],
+    "entry_points": [
+      {
+        "entry_point_number": 1,
+        "function": "run_stage1_summaries",
+        "function_line": 32,
+        "function_class": null,
+        "is_entry_point": true
+      },
+      {
+        "entry_point_number": 2,
+        "function": "run_stage25_transfers",
+        "function_line": 44,
+        "function_class": null,
+        "is_entry_point": true
+      },
+      {
+        "entry_point_number": 3,
+        "function": "run_stage3_propagation",
+        "function_line": 58,
+        "function_class": null,
+        "is_entry_point": true
+      },
+      {
+        "entry_point_number": 4,
+        "function": "main",
+        "function_line": 77,
+        "function_class": null,
+        "is_entry_point": true
+      }
+    ]
+  },
+  {
+    "file_number": 14,
+    "path": "codetracing/tainttrace/stage0_vuln_contracts.py",
+    "vulnerabilities": [
+      {
+        "vulnerability_number": 1,
+        "function": "build_contract(language, vuln_issue, vuln_message, body)",
+        "function_line": 25,
+        "function_class": null,
+        "is_entry_point": false,
+        "snippet": "    return llm_json(SYSTEM, user)",
+        "snippet_line": 33,
+        "issue": "command-injection",
+        "message": "The llm_json function takes a system and user prompt, which could be vulnerable to command injection if the user prompt is not properly sanitized. The `body` parameter from the function `build_contract` is incorporated into the `user` prompt.",
+        "severity": "high",
+        "confidence": 0.9
+      }
+    ],
+    "entry_points": []
+  },
+  {
+    "file_number": 15,
+    "path": "codetracing/tainttrace/stage3_propagate_transfers.py",
+    "vulnerabilities": [],
+    "entry_points": [
+      {
+        "entry_point_number": 1,
+        "function": "propagate_for_entrypoint",
+        "function_line": 28,
+        "function_class": null,
+        "is_entry_point": true
+      }
+    ]
+  },
+  {
+    "file_number": 16,
     "path": "codetracing/update_funcs_from_gemini.py",
     "vulnerabilities": [],
     "entry_points": [
@@ -234,39 +513,26 @@
     ]
   },
   {
-    "file_number": 10,
-    "path": "delta.py",
-    "vulnerabilities": [
-      {
-        "vulnerability_number": 1,
-        "function": "extract_relevant_diff(diff: str, line: int, context_lines: int = 3)",
-        "function_line": 4,
-        "function_class": null,
-        "is_entry_point": false,
-        "snippet": "hunk_start = start\n                    hunk_end = start + length",
-        "snippet_line": 21,
-        "issue": "integer-overflow",
-        "message": "The sum of start and length might exceed the maximum integer value, leading to an integer overflow.",
-        "severity": "low",
-        "confidence": 0.6
-      }
-    ],
-    "entry_points": []
-  },
-  {
-    "file_number": 11,
+    "file_number": 17,
     "path": "git_utils/git_ops.py",
     "vulnerabilities": [],
     "entry_points": [
       {
         "entry_point_number": 1,
+        "function": "create_pr",
+        "function_line": 567,
+        "function_class": null,
+        "is_entry_point": true
+      },
+      {
+        "entry_point_number": 2,
         "function": "create_patch_pr",
         "function_line": 651,
         "function_class": null,
         "is_entry_point": true
       },
       {
-        "entry_point_number": 2,
+        "entry_point_number": 3,
         "function": "create_failure_pr",
         "function_line": 732,
         "function_class": null,
@@ -275,7 +541,21 @@
     ]
   },
   {
-    "file_number": 12,
+    "file_number": 18,
+    "path": "llm/__init__.py",
+    "vulnerabilities": [],
+    "entry_points": [
+      {
+        "entry_point_number": 1,
+        "function": "llm_json",
+        "function_line": 14,
+        "function_class": null,
+        "is_entry_point": true
+      }
+    ]
+  },
+  {
+    "file_number": 19,
     "path": "llm/client.py",
     "vulnerabilities": [
       {
@@ -286,42 +566,48 @@
         "is_entry_point": false,
         "snippet": "parsed, _ = decoder.raw_decode(candidate[i:])",
         "snippet_line": 148,
-        "issue": "Uncontrolled Resource Consumption",
-        "message": "The `raw_decode` method may parse a large JSON string leading to excessive memory consumption or processing time. If the input `candidate` string is very large and contains a valid JSON structure somewhere within it, the `raw_decode` method will parse the JSON structure and return the parsed object along with the index of the end of the JSON structure. If an attacker can control the input string `candidate` and insert a large JSON structure, they could cause the server to consume excessive memory or processing time.",
+        "issue": "JSONRawDecodeNoLengthCheck",
+        "message": "The json.raw_decode function doesn't check the length of the 'candidate' string after the index 'i', potentially leading to an out-of-bounds read if the JSON structure extends beyond the string's boundaries. It's possible for an attacker to craft a string that causes this to read beyond the end of the buffer.",
         "severity": "medium",
         "confidence": 0.7
+      },
+      {
+        "vulnerability_number": 2,
+        "function": "_normalize_json_output(system: str, prompt: str, raw: str)",
+        "function_line": 84,
+        "function_class": "LLMClient",
+        "is_entry_point": false,
+        "snippet": "return json.dumps(parsed)",
+        "snippet_line": 138,
+        "issue": "JSONDumps",
+        "message": "The function uses json.dumps() without specifying an encoding. This means that it will use the default system encoding, which may not be UTF-8. This can lead to UnicodeEncodeError if the JSON data contains characters that are not representable in the default system encoding.",
+        "severity": "low",
+        "confidence": 0.5
       }
     ],
     "entry_points": []
   },
   {
-    "file_number": 13,
+    "file_number": 20,
     "path": "main.py",
     "vulnerabilities": [],
     "entry_points": [
       {
         "entry_point_number": 1,
         "function": "main",
-        "function_line": 35,
+        "function_line": 40,
         "function_class": null,
         "is_entry_point": true
       }
     ]
   },
   {
-    "file_number": 14,
+    "file_number": 21,
     "path": "scanners/flashscan.py",
     "vulnerabilities": [],
     "entry_points": [
       {
         "entry_point_number": 1,
-        "function": "gemini_scan",
-        "function_line": 514,
-        "function_class": null,
-        "is_entry_point": true
-      },
-      {
-        "entry_point_number": 2,
         "function": "print_gemini_findings",
         "function_line": 662,
         "function_class": null,
@@ -330,7 +616,7 @@
     ]
   },
   {
-    "file_number": 15,
+    "file_number": 22,
     "path": "scanners/gitleaks.py",
     "vulnerabilities": [],
     "entry_points": [
@@ -344,7 +630,7 @@
     ]
   },
   {
-    "file_number": 16,
+    "file_number": 23,
     "path": "scanners/semgrep_scanner.py",
     "vulnerabilities": [],
     "entry_points": [
@@ -357,13 +643,20 @@
       },
       {
         "entry_point_number": 2,
+        "function": "scan_paths",
+        "function_line": 45,
+        "function_class": null,
+        "is_entry_point": true
+      },
+      {
+        "entry_point_number": 3,
         "function": "semgrep_scan",
         "function_line": 301,
         "function_class": null,
         "is_entry_point": true
       },
       {
-        "entry_point_number": 3,
+        "entry_point_number": 4,
         "function": "main",
         "function_line": 348,
         "function_class": null,
@@ -372,39 +665,58 @@
     ]
   },
   {
-    "file_number": 17,
+    "file_number": 24,
     "path": "strategies/base.py",
     "vulnerabilities": [
       {
         "vulnerability_number": 1,
-        "function": "PatchResult.__init__(self, file: str, replacements: List[Tuple[str, str]], risk: str, requires_human: bool = True)",
+        "function": "PatchResult.__init__(self, file: str,\n        replacements: List[Tuple[str, str]],\n        risk: str,\n        requires_human: bool = True)",
         "function_line": null,
         "function_class": "PatchResult",
         "is_entry_point": false,
         "snippet": "self.replacements = list(replacements)",
         "snippet_line": 22,
-        "issue": "Potential DoS via unbounded list size",
-        "message": "The `replacements` list is directly assigned to the object's attribute without any size validation. An attacker could provide an extremely large list, potentially leading to excessive memory consumption and a denial-of-service.",
-        "severity": "medium",
-        "confidence": 0.6
-      }
-    ],
-    "entry_points": []
-  },
-  {
-    "file_number": 18,
-    "path": "strategies/llm_debug.py",
-    "vulnerabilities": [
+        "issue": "mutable-default-arg",
+        "message": "replacements is a mutable argument, which can lead to unexpected behavior",
+        "severity": "low",
+        "confidence": 0.4
+      },
       {
-        "vulnerability_number": 1,
-        "function": "trunc(s: str, n: int)",
-        "function_line": 40,
-        "function_class": null,
+        "vulnerability_number": 2,
+        "function": "PatchResult.__init__(self, file: str,\n        replacements: List[Tuple[str, str]],\n        risk: str,\n        requires_human: bool = True)",
+        "function_line": null,
+        "function_class": "PatchResult",
         "is_entry_point": false,
-        "snippet": "return s[:n] + \"\\n... [truncated]\"",
-        "snippet_line": 43,
-        "issue": "Unsafe string truncation",
-        "message": "String truncation can lead to incomplete or invalid data if the truncation point occurs mid-character in multi-byte encodings or within control sequences.",
+        "snippet": "requires_human: bool = True",
+        "snippet_line": 19,
+        "issue": "default-arg-injection",
+        "message": "Default value for requires_human may be vulnerable to injection if used unsafely elsewhere.",
+        "severity": "low",
+        "confidence": 0.3
+      },
+      {
+        "vulnerability_number": 3,
+        "function": "PatchResult.old(self) -> str",
+        "function_line": null,
+        "function_class": "PatchResult",
+        "is_entry_point": false,
+        "snippet": "return self.replacements[0][0] if self.replacements else \"\"",
+        "snippet_line": 29,
+        "issue": "index-error",
+        "message": "Accessing self.replacements[0] without checking if the list is empty may raise an IndexError.",
+        "severity": "low",
+        "confidence": 0.6
+      },
+      {
+        "vulnerability_number": 4,
+        "function": "PatchResult.new(self) -> str",
+        "function_line": null,
+        "function_class": "PatchResult",
+        "is_entry_point": false,
+        "snippet": "return self.replacements[0][1] if self.replacements else \"\"",
+        "snippet_line": 34,
+        "issue": "index-error",
+        "message": "Accessing self.replacements[0] without checking if the list is empty may raise an IndexError.",
         "severity": "low",
         "confidence": 0.6
       }
@@ -412,7 +724,7 @@
     "entry_points": []
   },
   {
-    "file_number": 19,
+    "file_number": 25,
     "path": "strategies/patch.py",
     "vulnerabilities": [
       {
@@ -423,29 +735,16 @@
         "is_entry_point": false,
         "snippet": "        raw = self.llm.run(sys, prompt)\n\n        try:\n            data = json.loads(raw)\n        except json.JSONDecodeError:\n            raise ValueError(\"PatchStrategy: LLM did not return valid JSON\")",
         "snippet_line": 74,
-        "issue": "LLM_Injection",
-        "message": "The code directly parses the LLM output with `json.loads` without validating the JSON structure against an expected schema. An attacker could manipulate the LLM response to inject arbitrary data, leading to unexpected behavior or even code execution.",
+        "issue": "Uncontrolled Data Used in Deserialization",
+        "message": "The code uses `json.loads(raw)` to parse the LLM's response without any validation or sanitization of the `raw` data. If the LLM is compromised or malicious, it could inject arbitrary code via a crafted JSON payload, leading to arbitrary code execution.",
         "severity": "high",
         "confidence": 0.9
-      },
-      {
-        "vulnerability_number": 2,
-        "function": "run(self, context)",
-        "function_line": 10,
-        "function_class": "PatchStrategy",
-        "is_entry_point": false,
-        "snippet": "        prompt = f\"\"\"\nFile: {file}\n\nSecurity finding:\nRule ID: {finding.get(\"check_id\")}\nMessage: {finding.get(\"extra\", {}).get(\"message\")}\n\nRelevant code context (tree-sitter function scope, diff hunk, and/or line \u2014 may be partial):\n{diff}\n\"\"\"",
-        "snippet_line": 57,
-        "issue": "LLM_Injection",
-        "message": "The code directly injects the values of `file`, `finding.get('check_id')`, `finding.get('extra', {}).get('message')`, and `diff` into the prompt sent to the LLM without sanitization. An attacker could manipulate these values (especially `diff` as it's user-provided or derived from user-provided content) to perform prompt injection attacks, potentially influencing the LLM's behavior or extracting sensitive information.",
-        "severity": "medium",
-        "confidence": 0.7
       }
     ],
     "entry_points": []
   },
   {
-    "file_number": 20,
+    "file_number": 26,
     "path": "strategies/triage.py",
     "vulnerabilities": [
       {
@@ -453,11 +752,11 @@
         "function": "run(self, context: dict)",
         "function_line": 11,
         "function_class": "TriageStrategy",
-        "is_entry_point": false,
+        "is_entry_point": true,
         "snippet": "raw = self.llm.run(sys, prompt)\n        # model_validate is currently not doing anything\n        return TriageResult.model_validate(json.loads(raw))",
-        "snippet_line": 37,
+        "snippet_line": 41,
         "issue": "Unvalidated LLM Output",
-        "message": "The code directly parses the output of the LLM as JSON without validation beyond `model_validate` which is noted to be non-functional. An attacker could manipulate the LLM to return arbitrary JSON, leading to potential vulnerabilities.",
+        "message": "The code directly parses the output of the LLM using `json.loads(raw)` without any validation or sanitization. This is then passed to `TriageResult.model_validate`, but the comment indicates that model validation is not currently enabled, making the application vulnerable to prompt injection and arbitrary code execution if the LLM returns malicious JSON. An attacker could manipulate the LLM to return a payload that exploits vulnerabilities in the system or exfiltrates sensitive information.",
         "severity": "high",
         "confidence": 0.9
       }
@@ -465,9 +764,36 @@
     "entry_points": []
   },
   {
-    "file_number": 21,
+    "file_number": 27,
     "path": "test_vulns.py",
-    "vulnerabilities": [],
+    "vulnerabilities": [
+      {
+        "vulnerability_number": 1,
+        "function": "bad_subprocess()",
+        "function_line": 5,
+        "function_class": null,
+        "is_entry_point": true,
+        "snippet": "subprocess.run(user_input, shell=True)",
+        "snippet_line": 7,
+        "issue": "subprocess-shell-injection",
+        "message": "User input is passed to subprocess.run with shell=True, allowing shell injection.",
+        "severity": "high",
+        "confidence": 1.0
+      },
+      {
+        "vulnerability_number": 2,
+        "function": "bad_eval()",
+        "function_line": 10,
+        "function_class": null,
+        "is_entry_point": true,
+        "snippet": "eval(code)",
+        "snippet_line": 12,
+        "issue": "eval-injection",
+        "message": "The eval function is used to execute arbitrary code from user input.",
+        "severity": "high",
+        "confidence": 1.0
+      }
+    ],
     "entry_points": [
       {
         "entry_point_number": 1,
@@ -482,11 +808,18 @@
         "function_line": 10,
         "function_class": null,
         "is_entry_point": true
+      },
+      {
+        "entry_point_number": 3,
+        "function": "main",
+        "function_line": 14,
+        "function_class": null,
+        "is_entry_point": true
       }
     ]
   },
   {
-    "file_number": 22,
+    "file_number": 28,
     "path": "testgoogle.py",
     "vulnerabilities": [],
     "entry_points": [
@@ -500,7 +833,7 @@
     ]
   },
   {
-    "file_number": 23,
+    "file_number": 29,
     "path": "testvulnchain.c",
     "vulnerabilities": [],
     "entry_points": [
@@ -521,7 +854,7 @@
     ]
   },
   {
-    "file_number": 24,
+    "file_number": 30,
     "path": "validators/base.py",
     "vulnerabilities": [
       {
@@ -532,16 +865,16 @@
         "is_entry_point": false,
         "snippet": "result = subprocess.run(\n            cmd,\n            cwd=self.repo_path,\n            capture_output=True,\n            text=True,\n        )",
         "snippet_line": 22,
-        "issue": "subprocess-injection",
-        "message": "The `run_cmd` function uses `subprocess.run` with `shell=False` (default) but takes a list of strings as the `cmd` argument without proper sanitization. If any string in the list contains shell metacharacters, it could lead to command injection. Even though shell=False is set, arguments passed to the command can still be interpreted by the shell if they contain shell metacharacters. ",
-        "severity": "medium",
-        "confidence": 0.7
+        "issue": "command-injection",
+        "message": "The `cmd` argument in `subprocess.run` is vulnerable to command injection. If any element of the list `cmd` is sourced from untrusted input, an attacker could inject arbitrary shell commands.",
+        "severity": "high",
+        "confidence": 0.9
       }
     ],
     "entry_points": []
   },
   {
-    "file_number": 25,
+    "file_number": 31,
     "path": "validators/cpp_validator.py",
     "vulnerabilities": [
       {
@@ -553,7 +886,7 @@
         "snippet": "self.run_cmd([\"g++\", \"-fsyntax-only\", str(file)])",
         "snippet_line": 8,
         "issue": "Command Injection",
-        "message": "The filename is passed to g++ without sanitization, allowing command injection.",
+        "message": "The filename is passed directly to the g++ command without sanitization, allowing for command injection if a file name contains malicious shell commands.",
         "severity": "high",
         "confidence": 0.9
       }
@@ -561,7 +894,7 @@
     "entry_points": []
   },
   {
-    "file_number": 26,
+    "file_number": 32,
     "path": "validators/generic_validator.py",
     "vulnerabilities": [
       {
@@ -573,15 +906,15 @@
         "snippet": "pass",
         "snippet_line": 7,
         "issue": "No Syntax Validation",
-        "message": "The syntax_check function in GenericValidator does nothing, effectively disabling syntax validation when a specific language validator is unavailable. This could lead to accepting syntactically invalid code.",
-        "severity": "low",
+        "message": "The syntax_check function does nothing, effectively disabling syntax validation for this language. This could lead to vulnerabilities if the code contains syntax errors that could be exploited.",
+        "severity": "medium",
         "confidence": 0.7
       }
     ],
     "entry_points": []
   },
   {
-    "file_number": 27,
+    "file_number": 33,
     "path": "validators/go_validator.py",
     "vulnerabilities": [
       {
@@ -593,15 +926,15 @@
         "snippet": "self.run_cmd([\"go\", \"build\", \"./...\"])",
         "snippet_line": 6,
         "issue": "Command Injection",
-        "message": "The `go build` command with `./...` might be vulnerable to command injection if directory names contain malicious characters. Consider sanitizing directory names or using specific file paths instead of pattern matching.",
+        "message": "The `go build` command with `./...` could be vulnerable to command injection if any directory names contain malicious code. Consider sanitizing directory names or using a safer method for specifying target files.",
         "severity": "medium",
-        "confidence": 0.6
+        "confidence": 0.7
       }
     ],
     "entry_points": []
   },
   {
-    "file_number": 28,
+    "file_number": 34,
     "path": "validators/python_validator.py",
     "vulnerabilities": [
       {
@@ -612,8 +945,8 @@
         "is_entry_point": false,
         "snippet": "self.run_cmd([\"python\", \"-m\", \"compileall\", \".\"])",
         "snippet_line": 7,
-        "issue": "Command Injection",
-        "message": "The command executes `python -m compileall .` without sanitizing the input. If the repository contains files or directories with names that include shell metacharacters, it could lead to arbitrary code execution.",
+        "issue": "Arbitrary Code Execution",
+        "message": "The `compileall` module, when used with a relative path like '.', can be tricked into compiling files outside the intended project directory if malicious symlinks or crafted directory structures exist. This allows an attacker to potentially execute arbitrary code during the compilation process.",
         "severity": "high",
         "confidence": 0.8
       }
@@ -621,7 +954,7 @@
     "entry_points": []
   },
   {
-    "file_number": 29,
+    "file_number": 35,
     "path": "validators/registry.py",
     "vulnerabilities": [
       {
@@ -632,8 +965,8 @@
         "is_entry_point": false,
         "snippet": "repo = Path(repo_path)",
         "snippet_line": 20,
-        "issue": "Pathlib Path Traversal",
-        "message": "The repo_path is not validated which could lead to path traversal.",
+        "issue": "Pathlib Path traversal",
+        "message": "The repo_path variable is used to construct a Path object without validation, potentially leading to path traversal vulnerabilities if the repo_path is attacker-controlled.",
         "severity": "medium",
         "confidence": 0.7
       }
@@ -641,7 +974,7 @@
     "entry_points": []
   },
   {
-    "file_number": 30,
+    "file_number": 36,
     "path": "validators/rust_validator.py",
     "vulnerabilities": [
       {
@@ -650,25 +983,12 @@
         "function_line": 6,
         "function_class": "RustValidator",
         "is_entry_point": false,
-        "snippet": "self.run_cmd([\"cargo\", \"check\"])",
-        "snippet_line": 8,
-        "issue": "Command Injection",
-        "message": "The `cargo check` command is executed without sanitizing or validating user-provided input, which can lead to command injection if the `Cargo.toml` file or environment variables used by cargo are maliciously crafted.",
-        "severity": "medium",
-        "confidence": 0.6
-      },
-      {
-        "vulnerability_number": 2,
-        "function": "syntax_check(self)",
-        "function_line": 6,
-        "function_class": "RustValidator",
-        "is_entry_point": false,
         "snippet": "self.run_cmd([\"rustc\", \"--emit=metadata\", str(file)])",
         "snippet_line": 12,
         "issue": "Command Injection",
-        "message": "The `rustc` command is executed on each `.rs` file without proper sanitization. If a file path contains malicious characters, it could lead to command injection.",
-        "severity": "medium",
-        "confidence": 0.6
+        "message": "The `file` variable, derived from `rglob`, could contain malicious filenames that, when converted to a string and passed to `rustc`, could lead to command injection.",
+        "severity": "high",
+        "confidence": 0.8
       }
     ],
     "entry_points": []
