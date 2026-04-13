@@ -4,7 +4,7 @@ import subprocess
 
 def bad_subprocess():
     user_input = input("Enter cmd: ")
-    subprocess.run(user_input, shell=True)  
+    subprocess.run(user_input.split(), shell=False)  
 
 
 def bad_eval():
