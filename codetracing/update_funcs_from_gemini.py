@@ -4,23 +4,19 @@ import sys
 from neo4j import GraphDatabase
 from get_func_by_name import get_function_by_name
 
-REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+_BUGSLAYER_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 NEO4J_URI = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
 NEO4J_USER = os.environ.get("NEO4J_USER", "neo4j")
 NEO4J_PASS = os.environ.get("NEO4J_PASS", "password")
 
-# Default to parent directory gemini_results.json
-DEFAULT_JSON = os.path.join(os.path.dirname(__file__), "..", "gemini_results.json")
-INPUT_JSON = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_JSON
-
-
-def normalize_repo_path(path: str) -> tuple[str, str]:
+def normalize_repo_path(path: str, repo_root: str) -> tuple[str, str]:
     """Return (relative_path_from_repo_root, absolute_path)."""
     if not path:
         return path, path
-    abs_path = path if os.path.isabs(path) else os.path.abspath(os.path.join(REPO_ROOT, path))
-    rel_path = os.path.relpath(abs_path, REPO_ROOT)
+    root = os.path.abspath(repo_root)
+    abs_path = path if os.path.isabs(path) else os.path.abspath(os.path.join(root, path))
+    rel_path = os.path.relpath(abs_path, root)
     return rel_path, abs_path
 
 
@@ -61,7 +57,7 @@ def update_function_flags(
         },
     )
 
-def process_gemini_results(json_file: str) -> int:
+def process_gemini_results(json_file: str, repo_root: str) -> int:
     """Parse gemini_results.json and update neo4j with flags."""
     driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASS))
     updates = 0
@@ -72,7 +68,7 @@ def process_gemini_results(json_file: str) -> int:
     with driver.session() as session:
         for file_entry in data:
             raw_path = file_entry.get("path")
-            path, abs_path = normalize_repo_path(raw_path)
+            path, abs_path = normalize_repo_path(raw_path, repo_root)
             print(
                 f"Processing file entry raw_path={raw_path!r} "
                 f"normalized_path={path!r} abs_path={abs_path!r}"
@@ -158,14 +154,27 @@ def process_gemini_results(json_file: str) -> int:
     return updates
 
 
-def main():
-    if not os.path.exists(INPUT_JSON):
-        print(f"Error: {INPUT_JSON} not found")
+def main(repo_path: str | None = None, input_json: str | None = None):
+    scan_root = os.path.abspath(repo_path) if repo_path else _BUGSLAYER_ROOT
+    json_path = input_json or os.path.join(scan_root, "gemini_results.json")
+
+    if not os.path.exists(json_path):
+        print(f"Error: {json_path} not found")
         sys.exit(1)
 
-    updates = process_gemini_results(INPUT_JSON)
+    updates = process_gemini_results(json_path, scan_root)
     print(f"\nTotal updates: {updates}")
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+
+    ap = argparse.ArgumentParser(description="Apply gemini_results.json flags to Neo4j")
+    ap.add_argument("input_json", nargs="?", default=None, help="Path to gemini_results.json")
+    ap.add_argument(
+        "--repo",
+        default=None,
+        help="Repository root paths in JSON are relative to (default: BugSlayer install directory)",
+    )
+    ns = ap.parse_args()
+    main(repo_path=ns.repo, input_json=ns.input_json)

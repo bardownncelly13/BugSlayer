@@ -70,3 +70,9 @@ Common alternatives for `--base-ref`:
 - Production-grade patch generation
 
 These are planned next steps once the diff-based scanning pipeline is validated.
+
+THIS CODE WILL GENERATE AND OVERWRITE ENSURE ANYTHING IMPORTANT IS NOT SAVED:
+- call.jsonl
+- funcs.jsonl
+- gemini_results.json
+- taint_findings.jsonl

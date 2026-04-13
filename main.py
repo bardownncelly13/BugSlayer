@@ -43,9 +43,9 @@ def main(repo_path: str = ".", semgrep_config: str = None, base_ref: str = "orig
     pr_base_branch = resolve_pr_base_branch(repo_path, effective_base_ref)
     print(f"[DEBUG] requested base_ref={base_ref!r}, effective_base_ref={effective_base_ref!r}, pr_base_branch={pr_base_branch!r}")
 
-    # Create call graph first
+    # Create call graph first (scan normalized repo_path)
     print("[*] Creating call graph...")
-    create_callgraph_main()
+    create_callgraph_main(repo_path=repo_path)
 
     triage = TriageStrategy()
     patcher = PatchStrategy()
@@ -74,13 +74,13 @@ def main(repo_path: str = ".", semgrep_config: str = None, base_ref: str = "orig
     else:
         print("no geminai api key")
 
-    # Update functions from Gemini results
+    # Update functions from Gemini results (paths relative to same repo)
     print("[*] Updating functions from Gemini results...")
-    update_funcs_from_gemini_main()
+    update_funcs_from_gemini_main(repo_path=repo_path)
 
-    # Run taint trace
+    # Run taint trace (write findings next to scanned repo by default)
     print("[*] Running taint trace...")
-    run_tainttrace_main()
+    run_tainttrace_main(default_out=os.path.join(repo_path, "taint_findings.jsonl"))
 
     taint_path = os.environ.get("TAINT_FINDINGS_JSONL")
     if not taint_path:

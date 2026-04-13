@@ -74,11 +74,12 @@ def run_stage3_propagation(client: Neo4jClient, depth: int, out_path: str):
             for item in findings:
                 f.write(json.dumps(item, ensure_ascii=False) + "\n")
 
-def main():
+def main(*, default_out: str | None = None, argv: list[str] | None = None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--depth", type=int, default=DEFAULT_DEPTH)
     ap.add_argument("--limit", type=int, default=2000, help="limit per stage fetch")
-    ap.add_argument("--out", default="taint_findings.jsonl")
+    out_default = default_out if default_out is not None else "taint_findings.jsonl"
+    ap.add_argument("--out", default=out_default)
 
     ap.add_argument("--contracts", action="store_true")
     ap.add_argument("--summaries", action="store_true")
@@ -89,7 +90,12 @@ def main():
     ap.add_argument("--overwrite-summaries", action="store_true")
     ap.add_argument("--overwrite-transfers", action="store_true")
 
-    args = ap.parse_args()
+    if argv is not None:
+        args = ap.parse_args(argv)
+    elif default_out is not None:
+        args = ap.parse_args([])
+    else:
+        args = ap.parse_args()
     run_all = not (args.contracts or args.summaries or args.transfers or args.propagate)
 
     client = Neo4jClient()

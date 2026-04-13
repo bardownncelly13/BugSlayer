@@ -7,8 +7,8 @@ NEO4J_URI  = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
 NEO4J_USER = os.environ.get("NEO4J_USER", "neo4j")
 NEO4J_PASS = os.environ.get("NEO4J_PASS", "password")
 
-REPO_NAME = os.environ.get("REPO_NAME", "myrepo")
-REPO_ROOT = os.environ.get("REPO_ROOT", os.path.abspath("."))
+_DEFAULT_REPO_NAME = os.environ.get("REPO_NAME", "myrepo")
+_DEFAULT_REPO_ROOT = os.environ.get("REPO_ROOT", os.path.abspath("."))
 
 INPUT_JSONL = sys.argv[1] if len(sys.argv) > 1 else "funcs.jsonl"
 
@@ -77,7 +77,18 @@ def upsert_record(tx, repo_name, repo_root, rec):
     )
 
 
-def run_ingest_funcs(jsonl_file: str):
+def run_ingest_funcs(
+    jsonl_file: str,
+    repo_root: str | None = None,
+    repo_name: str | None = None,
+) -> int:
+    root = (
+        os.path.abspath(repo_root)
+        if repo_root is not None
+        else _DEFAULT_REPO_ROOT
+    )
+    name = repo_name if repo_name is not None else _DEFAULT_REPO_NAME
+
     driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASS))
 
     total = 0
@@ -95,14 +106,15 @@ def run_ingest_funcs(jsonl_file: str):
                 if isinstance(rec, dict) and "_stats" in rec:
                     continue
 
-                session.execute_write(upsert_record, REPO_NAME, REPO_ROOT, rec)
+                session.execute_write(upsert_record, name, root, rec)
                 total += 1
 
     driver.close()
+    return total
 
 
 def main():
-    run_ingest_funcs(INPUT_JSONL)
+    total = run_ingest_funcs(INPUT_JSONL)
     print(f"Ingested {total} functions.")
 
 
