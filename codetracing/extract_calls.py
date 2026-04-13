@@ -44,7 +44,7 @@ _LIBS = {}
 
 
 def make_callsite_id(caller_key: str, call_line: int, callee_text: str) -> str:
-    h = hashlib.sha1(callee_text.encode("utf-8", errors="replace")).hexdigest()[:12]
+    h = hashlib.sha256(callee_text.encode("utf-8", errors="replace")).hexdigest()[:12]
     return f"{caller_key}::{call_line}::{h}"
 
 
