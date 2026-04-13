@@ -246,7 +246,16 @@ def iter_calls(tree, source: bytes, rel_path: str, lang: str):
 
 
 def run_extract_calls(repo_root: str, out_file: str):
-    with open(out_file, "w", encoding="utf-8") as out_f:
+    # Validate output file path to prevent directory traversal
+    abs_out_file = os.path.abspath(out_file)
+    current_dir = os.path.abspath(os.getcwd())
+    
+    # Check if the resolved path is within the current directory
+    rel_path = os.path.relpath(abs_out_file, current_dir)
+    if rel_path.startswith('..') or os.path.isabs(rel_path):
+        raise ValueError(f"Output file path is outside allowed directory: {out_file}")
+    
+    with open(abs_out_file, "w", encoding="utf-8") as out_f:
         for root, dirs, files in os.walk(repo_root):
             dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
             for file in files:
