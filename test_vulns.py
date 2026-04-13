@@ -7,9 +7,14 @@ def bad_subprocess():
     subprocess.run(user_input, shell=True)  
 
 
+import ast
+
 def bad_eval():
     code = input("Enter Python: ")
-    eval(code)
+    try:
+        ast.literal_eval(code)
+    except (ValueError, SyntaxError):
+        print("Invalid input: only literal expressions allowed")
 
 def main():
     bad_subprocess()
