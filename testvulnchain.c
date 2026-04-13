@@ -24,7 +24,8 @@ static void step2(const char *s) {
 // Intentionally vulnerable: classic stack buffer overflow via strcpy.
 static void vulnerable_copy(const char *s) {
     char buf[16];
-    strcpy(buf, s);  // VULNERABLE: no bounds check
+    strncpy(buf, s, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = '\0';  // Ensure null termination
     printf("buf=%s\n", buf);
 }
 
