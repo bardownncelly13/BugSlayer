@@ -227,6 +227,16 @@ def is_git_url(s: str) -> bool:
 
 
 def clone_to_temp(git_url_or_path: str) -> str:
+    # Validate git URL/path to prevent command injection
+    if not git_url_or_path or git_url_or_path.startswith('-'):
+        raise ValueError("Invalid git URL or path")
+    
+    # Allow URLs (http/https/git/ssh) and local paths
+    import re
+    url_pattern = r'^(https?://|git://|ssh://|git@|/|\.)'
+    if not re.match(url_pattern, git_url_or_path):
+        raise ValueError("Invalid git URL or path format")
+    
     try:
         from git_utils.git_ops import create_temp_repo
 
