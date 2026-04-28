@@ -3,7 +3,18 @@ from typing import List, Dict, Optional
 import subprocess
 import json
 
+def _validate_config(config: str) -> None:
+    """Reject remote URLs and non-existent paths to prevent arbitrary rule loading."""
+    if config.startswith(("http://", "https://", "p/", "r/")):
+        raise ValueError(
+            f"Remote or registry semgrep config not permitted: {config!r}. "
+            "Use a local file path."
+        )
+    if not os.path.isfile(config):
+        raise FileNotFoundError(f"Semgrep config file not found: {config!r}")
+
 def scan_with_semgrep(repo_path: Optional[str] = None, base_ref: str = "origin/main", config: str = r".\rules\owasp_minimal.yml") -> List[Dict]:
+    _validate_config(config)
     cmd = ["semgrep", "ci", "--config", config, "--json"]
 
     env = os.environ.copy()
