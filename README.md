@@ -1,5 +1,7 @@
 # BugSlayer - End-to-End
 
+[![Setup Guide](https://img.shields.io/badge/Setup%20Guide-BugSlayer-00ff88?style=for-the-badge&logo=github&logoColor=black)](https://morganmcl.github.io/bug-slayer-setup/)
+
 BugSlayer is a diff-aware security remediation pipeline that combines:
 
 - Semgrep findings on changed code
