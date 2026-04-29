@@ -1,72 +1,142 @@
-## Current State (Proof of Concept)
+# BugSlayer - End-to-End
 
-This project is currently a **diff-based static analysis proof of concept**.
+BugSlayer is a diff-aware security remediation pipeline that combines:
 
-The system scans **only code changes** (git diffs) rather than entire repositories. This keeps scans fast and focuses results on **new issues introduced by a change**, which is the core design goal.
+- Semgrep findings on changed code
+- Neo4j-backed call graph construction
+- Taint reachability propagation from entrypoints to vulnerable sinks
+- LLM triage and patch generation
+- Automated branch/PR creation for valid fixes
 
-At this stage:
-- Static analysis is implemented via **Semgrep**
-- The LLM-based triage and patching logic is **stubbed / evolving**
-- The goal is to validate scanner integration and diff-based workflows
+The main entrypoint is `main.py`.
 
+## What It Does Today
 
-## How Scanning Works
+When you run `main.py`, BugSlayer executes this flow:
 
-Instead of scanning a full repository, the scanner:
+1. Builds a call graph for the target repository and reloads Neo4j.
+2. Runs Semgrep (diff-aware when possible).
+3. Marks vulnerable functions in Neo4j based on Semgrep findings.
+4. Optionally runs Gemini-based scanning when `GEMINI_API_KEY` is set.
+5. Updates function metadata from Gemini results.
+6. Runs tainttrace stages and writes `taint_findings.jsonl`.
+7. For each taint finding:
+   - Builds context,
+   - Runs LLM triage,
+   - Attempts validated patch generation in a temp clone,
+   - Creates a patch PR on success, or a remediation-report branch on failure.
 
-1. Compares the current `HEAD` against a base reference (e.g. `origin/main`)
-2. Computes the git diff
-3. Runs Semgrep with `--git-diff`
-4. Reports **only findings that intersect changed lines**
+Exit behavior:
 
-This ensures:
-- Faster scans on large repositories
-- Lower noise
-- Findings correspond directly to the change being reviewed
-
+- Exit code `1` when taint findings exist.
+- Exit code `0` when no taint findings exist.
 
 ## Requirements
 
 - Python 3.10+
 - Git
-- Semgrep
+- Docker + Docker Compose (for Neo4j)
+- Semgrep CLI available on PATH
 
-Install Semgrep if needed:
+Install Python dependencies:
 
-    pip install semgrep
+```bash
+pip install -r requirements.txt
+```
 
+If Semgrep is missing:
 
-## Running the Scanner
+```bash
+pip install semgrep
+```
 
-From inside a git repository:
+## Neo4j Setup
 
-    python main.py --base-ref origin/main
+BugSlayer manages Neo4j through `codetracing/graphdb/docker-compose.yml`.
 
-Or explicitly specify a repository path:
+- Default Bolt URI: `bolt://127.0.0.1:7687`
+- Default Browser URL: `http://localhost:7474`
+- Default credentials: `neo4j / password`
 
-    python main.py --repo /path/to/repo --base-ref origin/main
+The callgraph step performs a destructive reset of graph state (`docker compose down -v` then `up -d`).
 
-Common alternatives for `--base-ref`:
-- main
-- develop
-- HEAD~1
-- Any valid branch, tag, or commit SHA
+## Quick Start
 
+From this repository root:
 
-## What You Should Expect
+```bash
+python main.py --repo /path/to/target/repo --base-ref origin/main --head-ref HEAD
+```
 
-- Only issues **introduced by the diff** are reported
-- Existing issues in unchanged code are ignored
-- Runtime is typically seconds, even for large repos
-- Output is raw/static for now (LLM integration is upcoming)
+Common options:
 
+- `--repo`: repository to scan (default `.`)
+- `--base-ref`: diff base reference (default `origin/main`)
+- `--head-ref`: diff head reference (default `HEAD`)
+- `--semgrep-config`: custom Semgrep config or comma-separated configs
 
-## What This Does *Not* Do (Yet)
+Notes:
 
-- Full-repository scans
-- Historical vulnerability tracking
-- Commit-level attribution
-- Automated remediation explanations
-- Production-grade patch generation
+- If diff refs are valid and changed files exist, Semgrep results are filtered to changed lines.
+- If no usable diff is available, BugSlayer falls back to a full-repository Semgrep scan.
 
-These are planned next steps once the diff-based scanning pipeline is validated.
+## Environment Variables
+
+Core runtime:
+
+- `MAX_PATCH_ATTEMPTS` (default `5`)
+- `TAINT_FINDINGS_JSONL` (override taint findings input path)
+
+Neo4j:
+
+- `NEO4J_URI` (default `bolt://127.0.0.1:7687`)
+- `NEO4J_USER` (default `neo4j`)
+- `NEO4J_PASS` (default `password`)
+- `NEO4J_SERVICE` (default `neo4j`, used by compose exec)
+
+Gemini scanning / retries:
+
+- `GEMINI_API_KEY` (enables Gemini scan path)
+- `GEMINI_MAX_RETRIES`
+- `GEMINI_RETRY_BASE_SECONDS`
+- `GEMINI_RETRY_MAX_SECONDS`
+- `GEMINI_RETRY_VERBOSE`
+
+LLM triage/patch backend (OpenAI-compatible endpoint):
+
+- `TAMUS_AI_CHAT_API_ENDPOINT`
+- `TAMUS_AI_CHAT_API_KEY`
+- `TAMUS_AI_CHAT_MODEL` (default `protected.Claude Sonnet 4`)
+
+PR creation credentials:
+
+- GitHub: `GITHUB_TOKEN`
+- Azure DevOps: `AZURE_DEVOPS_TOKEN` (and optional `AZURE_DEVOPS_USER`)
+
+## Generated Artifacts and Side Effects
+
+Running the pipeline creates or overwrites files in the scanned repository root:
+
+- `funcs.jsonl`
+- `calls.jsonl`
+- `gemini_results.json` (when Gemini scanner runs)
+- `taint_findings.jsonl`
+
+Additional side effects:
+
+- Neo4j data volume is wiped/recreated during callgraph setup.
+- Temporary git clones are created for patch validation.
+- On successful patch validation, branches/commits/pushes and PR creation are attempted.
+
+Do not run this against repositories or environments where those side effects are unacceptable.
+
+## Standalone Utilities
+
+- `build_CallGraph.sh`: shell workflow for call graph extraction + Neo4j ingest.
+- `scanners/gitleaks.py`: run Gitleaks in Docker (`--history` optional).
+- `codetracing/tainttrace/run_tainttrace.py`: run taint stages directly.
+
+## Current Limitations
+
+- Patch generation quality depends on LLM output and validator heuristics.
+- Validation currently focuses on non-destructive edits and scanner re-checks, not full test-suite execution. We expect test suites would be in parallel pipelines
